@@ -1,17 +1,17 @@
-name: Build Source Engine (WAF)
+name: Build Source Engine (WAF) - Full Archive
 
 on: 
-  workflow_dispatch: # Кнопка для ручного запуску
+  workflow_dispatch: # Запуск вручну
 
 jobs:
   build-windows:
-    runs-on: windows-2019 # Використовуємо 2019 для кращої сумісності з Source
+    runs-on: windows-2019
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          submodules: recursive # Підтягуємо всі залежності (ivp, lib, thirdparty)
+          submodules: recursive
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -22,29 +22,25 @@ jobs:
         uses: microsoft/setup-msbuild@v2
 
       - name: Download SDL2
-        # Двигуну потрібна бібліотека SDL2 для Windows
         run: |
           curl -L https://github.com/libsdl-org/SDL/releases/download/release-2.28.5/SDL2-devel-2.28.5-VC.zip -o sdl2.zip
           Expand-Archive sdl2.zip -DestinationPath .
-          mv SDL2-2.28.5 SDL2
+          if (Test-Path "SDL2-2.28.5") { Rename-Item "SDL2-2.28.5" "SDL2" }
 
       - name: Configure Waf
-        # -T release: збірка для гравців (швидка)
-        # --build-games=hl2: збираємо файли для Half-Life 2
-        # --sdl2=SDL2: вказуємо шлях до завантаженої бібліотеки
         run: python waf configure -T release --build-games=hl2 --sdl2=SDL2
 
       - name: Build with Waf
-        # -p: показувати прогрес у логах
         run: python waf build -p
 
-      - name: Upload Artifacts
+      - name: Upload Full Build Folder
         uses: actions/upload-artifact@v4
         with:
-          name: SourceEngine-Windows-Build
-          # Збираємо всі .exe та .dll файли, які з'являться після білду
+          name: Full-Build-Output
+          # Архівуємо всю папку build та out (якщо вона створилася)
           path: |
-            build/release/*.exe
-            build/release/*.dll
-            build/release/*.pdb
-            
+            build/
+            out/
+          # Якщо папки порожні, білд не впаде, але ми побачимо це в логах
+          if-no-files-found: warn 
+          
