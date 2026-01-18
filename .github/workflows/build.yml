@@ -1,11 +1,10 @@
-name: Build Source Engine (WAF) - VS2019 Compatibility Fix
+name: Build Source Engine (WAF) - Manual Toolchain Fix
 
 on: 
   workflow_dispatch:
 
 jobs:
   build-windows:
-    # Повертаємо 2019, бо твій Waf точно вміє з нею працювати
     runs-on: windows-2019
 
     steps:
@@ -19,15 +18,10 @@ jobs:
         with:
           python-version: '3.9'
 
-      # Використовуємо MSVC 2019
-      - name: Setup MSVC
-        uses: microsoft/setup-msbuild@v2
-
       - name: Setup MSVC Dev Cmd
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
-          toolset: 14.2 # Це відповідає Visual Studio 2019
 
       - name: Download SDL2
         run: |
@@ -37,22 +31,24 @@ jobs:
 
       - name: Configure and Build
         env:
-          # Ці змінні «врятують» твій тихий краш і порожні ліби
+          # Вказуємо прямі команди замість автопошуку msvc
+          CC: cl.exe
+          CXX: cl.exe
+          # Наші критичні виправлення експорту та підсистеми
           CL: "/DTIER0_DLL_EXPORT /DVSTDLIB_DLL_EXPORT /D_WINDOWS /DWIN32 /D_CRT_SECURE_NO_WARNINGS"
           LINK: "/SUBSYSTEM:WINDOWS,10.0"
         shell: pwsh
         run: |
-          # Видаляємо MinGW, щоб він не ліз першим
+          # Видаляємо MinGW, щоб він не був "планом Б"
           $env:Path = ($env:Path -split ';' | Where-Object { $_ -notmatch 'mingw' }) -join ';'
           
           if (Test-Path "build") { Remove-Item -Recurse -Force build }
 
-          # Конфігурація під VS 2019
-          python waf configure -T release --build-games=hl2 --sdl2=SDL2 `
-            --check-c-compiler=msvc --check-cxx-compiler=msvc `
-            --msvc_version="msvc 14.2"
+          # УВАГА: Ми прибрали --check-c-compiler=msvc
+          # Ми просто запускаємо конфігурацію, Waf має підхопити CC/CXX з env
+          python waf configure -T release --build-games=hl2 --sdl2=SDL2
 
-          # Збірка
+          # Якщо конфігурація пройшла, будуємо
           python waf build -p
 
       - name: Prepare Artifacts
@@ -60,17 +56,13 @@ jobs:
         run: |
           $BinPath = "build/release_final"
           if (!(Test-Path $BinPath)) { New-Item -ItemType Directory -Path $BinPath }
-          
-          # Обов'язково кладемо SDL2.dll поруч
           if (Test-Path "SDL2/lib/x64/SDL2.dll") {
               Copy-Item "SDL2/lib/x64/SDL2.dll" -Destination $BinPath
           }
-          
-          # Збираємо всі скомпільовані файли
           Get-ChildItem -Path "build" -Include @("*.dll", "*.exe") -Recurse | Copy-Item -Destination $BinPath -Force
 
       - name: Upload Build
         uses: actions/upload-artifact@v4
         with:
-          name: SourceEngine-Windows-VS2019-Fixed
+          name: SourceEngine-Manual-CC
           path: build/release_final/
