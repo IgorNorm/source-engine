@@ -1,4 +1,4 @@
-name: Build Source Engine - FINAL FIX
+name: Build Source Engine - FINAL FIX v2
 
 on: 
   workflow_dispatch:
@@ -30,26 +30,29 @@ jobs:
           :: 1. Ініціалізуємо середовище MSVC
           call "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
           
-          :: 2. Видаляємо MinGW з PATH, щоб Waf його не підхопив
+          :: 2. Видаляємо MinGW з PATH
           set PATH=%PATH:C:\mingw64\bin;=%
           
           :: 3. Очищення
           if exist build rd /s /q build
           
-          :: 4. КОНФІГУРАЦІЯ (Критичні зміни тут)
-          :: Ми передаємо прапорці ТУТ, а не через ENV, щоб не ламати пошук msvc
-          python waf configure -T release --build-games=hl2 --sdl2=SDL2 ^
-            --cflags="/DTIER0_DLL_EXPORT /DVSTDLIB_DLL_EXPORT /D_WINDOWS /DWIN32 /D_CRT_SECURE_NO_WARNINGS" ^
-            --cxxflags="/DTIER0_DLL_EXPORT /DVSTDLIB_DLL_EXPORT /D_WINDOWS /DWIN32 /D_CRT_SECURE_NO_WARNINGS" ^
-            --linkflags="/SUBSYSTEM:WINDOWS,10.0"
-
-          :: 5. ЗБІРКА
+          :: 4. ВСТАНОВЛЮЄМО ПРАПОРЦІ ЧЕРЕЗ СТАНДАРТНІ ЗМІННІ (БЕЗ CL)
+          :: Ми використовуємо CFLAGS/LDFLAGS, які Waf розуміє як параметри збірки,
+          :: але вони не заважають йому шукати cl.exe (на відміну від змінної CL)
+          set CFLAGS=/DTIER0_DLL_EXPORT /DVSTDLIB_DLL_EXPORT /D_WINDOWS /DWIN32 /D_CRT_SECURE_NO_WARNINGS
+          set CXXFLAGS=/DTIER0_DLL_EXPORT /DVSTDLIB_DLL_EXPORT /D_WINDOWS /DWIN32 /D_CRT_SECURE_NO_WARNINGS
+          set LDFLAGS=/SUBSYSTEM:WINDOWS,10.0
+          
+          :: 5. КОНФІГУРАЦІЯ
+          python waf configure -T release --build-games=hl2 --sdl2=SDL2
+          
+          :: 6. ЗБІРКА
           python waf build -p
 
       - name: Prepare Artifacts
         shell: powershell
         run: |
-          $BinPath = "build/release_fixed"
+          $BinPath = "build/release_final"
           New-Item -ItemType Directory -Force -Path $BinPath
           if (Test-Path "SDL2/lib/x64/SDL2.dll") { Copy-Item "SDL2/lib/x64/SDL2.dll" -Destination $BinPath }
           Get-ChildItem -Path "build" -Include @("*.dll", "*.exe") -Recurse | Copy-Item -Destination $BinPath -Force
@@ -58,4 +61,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: SourceEngine-Fixed-Final
-          path: build/release_fixed/
+          path: build/release_final/
