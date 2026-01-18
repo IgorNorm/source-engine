@@ -1,4 +1,4 @@
-name: Build Source Engine - FINAL FIX v2
+name: Build Source Engine - Bypass Compiler Sucks
 
 on: 
   workflow_dispatch:
@@ -27,26 +27,29 @@ jobs:
       - name: Configure and Build
         shell: cmd
         run: |
-          :: 1. Ініціалізуємо середовище MSVC
+          :: 1. Ініціалізуємо MSVC 2019
           call "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
           
-          :: 2. Видаляємо MinGW з PATH
-          set PATH=%PATH:C:\mingw64\bin;=%
-          
-          :: 3. Очищення
+          :: 2. Очищення
           if exist build rd /s /q build
           
-          :: 4. ВСТАНОВЛЮЄМО ПРАПОРЦІ ЧЕРЕЗ СТАНДАРТНІ ЗМІННІ (БЕЗ CL)
-          :: Ми використовуємо CFLAGS/LDFLAGS, які Waf розуміє як параметри збірки,
-          :: але вони не заважають йому шукати cl.exe (на відміну від змінної CL)
+          :: 3. ЧИСТА КОНФІГУРАЦІЯ
+          :: Ми не ставимо CFLAGS тут, щоб пройти тест "Testing 64bit support"
+          python waf configure -T release --build-games=hl2 --sdl2=SDL2 --msvc_targets="x64"
+          
+          if %ERRORLEVEL% NEQ 0 (
+            echo --- CONFIG FAILED. LOG: ---
+            type build\config.log
+            exit /b 1
+          )
+
+          :: 4. ЗБІРКА З ПРАПОРЦЯМИ
+          :: Передаємо прапорці саме тут. Waf додасть їх до основної збірки.
+          :: Це виправить tier0.dll і не зламає перевірку компілятора.
           set CFLAGS=/DTIER0_DLL_EXPORT /DVSTDLIB_DLL_EXPORT /D_WINDOWS /DWIN32 /D_CRT_SECURE_NO_WARNINGS
           set CXXFLAGS=/DTIER0_DLL_EXPORT /DVSTDLIB_DLL_EXPORT /D_WINDOWS /DWIN32 /D_CRT_SECURE_NO_WARNINGS
           set LDFLAGS=/SUBSYSTEM:WINDOWS,10.0
           
-          :: 5. КОНФІГУРАЦІЯ
-          python waf configure -T release --build-games=hl2 --sdl2=SDL2
-          
-          :: 6. ЗБІРКА
           python waf build -p
 
       - name: Prepare Artifacts
@@ -60,5 +63,5 @@ jobs:
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: SourceEngine-Fixed-Final
+          name: SourceEngine-Final-Result
           path: build/release_final/
