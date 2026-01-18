@@ -1,19 +1,76 @@
-- name: Setup MSVC
+name: Build Source Engine (WAF) - Full Fixed Archive
+
+on: 
+  workflow_dispatch: # Запуск вручну
+
+jobs:
+  build-windows:
+    # Використовуємо актуальну версію для кращої сумісності з SDK
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+
+      # 1. Встановлюємо MSBuild
+      - name: Setup MSVC
         uses: microsoft/setup-msbuild@v2
 
-      # Додаємо цей крок, щоб WAF точно бачив інструменти MSVC (cl.exe, link.exe)
+      # 2. Критичний крок: Ініціалізуємо змінні оточення Visual Studio (PATH, INCLUDE, LIB)
+      # Це змусить waf "побачити" cl.exe та link.exe замість gcc
       - name: Setup MSVC Dev Cmd
         uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Download SDL2
+        run: |
+          curl -L https://github.com/libsdl-org/SDL/releases/download/release-2.28.5/SDL2-devel-2.28.5-VC.zip -o sdl2.zip
+          Expand-Archive sdl2.zip -DestinationPath .
+          if (Test-Path "SDL2-2.28.5") { Rename-Item "SDL2-2.28.5" "SDL2" }
 
       - name: Configure and Build with Waf
+        # 3. Передаємо параметри через змінні оточення CL та LINK.
+        # CL: Додає дефайни для експорту функцій у DLL (щоб вони не були порожніми).
+        # LINK: Примусово ставить версію підсистеми 10.0 (замість 6.0).
         env:
-          # Змінюємо синтаксис дефайнів під GCC, якщо він все одно вибере його, 
-          # але пріоритет ставимо на MSVC
-          CL: "/DTIER0_DLL_EXPORT /DVSTDLIB_DLL_EXPORT /D_WINDOWS /DWIN32"
+          CL: "/DTIER0_DLL_EXPORT /DVSTDLIB_DLL_EXPORT /D_WINDOWS /DWIN32 /D_CRT_SECURE_NO_WARNINGS"
           LINK: "/SUBSYSTEM:WINDOWS,10.0"
         run: |
-          # Додаємо явну перевірку тільки msvc
+          # Додаємо параметри --check-c-compiler, щоб waf не намагався використати gcc/mingw
           python waf configure -T release --build-games=hl2 --sdl2=SDL2 `
-          --check-c-compiler=msvc --check-cxx-compiler=msvc
+          --check-c-compiler=msvc --check-cxx-compiler=msvc `
+          --msvc_version="msvc 14.3" 
           
           python waf build -p
+
+      - name: Prepare Artifacts
+        # 4. Збираємо все докупи, включаючи SDL2.dll, без якої гра не запуститься
+        run: |
+          $BinPath = "build/release_fixed"
+          if (!(Test-Path $BinPath)) { New-Item -ItemType Directory -Path $BinPath }
+          
+          # Копіюємо SDL2
+          if (Test-Path "SDL2/lib/x64/SDL2.dll") {
+              Copy-Item "SDL2/lib/x64/SDL2.dll" -Destination $BinPath
+          }
+          
+          # Рекурсивно збираємо всі скомпільовані бінарники (.dll та .exe) з папки build
+          Get-ChildItem -Path "build" -Filter "*.dll" -Recurse | Copy-Item -Destination $BinPath -Force
+          Get-ChildItem -Path "build" -Filter "*.exe" -Recurse | Copy-Item -Destination $BinPath -Force
+          
+          Write-Host "Build artifacts prepared in $BinPath"
+
+      - name: Upload Full Build Folder
+        uses: actions/upload-artifact@v4
+        with:
+          name: SourceEngine-Windows-x64-Fixed
+          path: build/release_fixed/
+          if-no-files-found: error
