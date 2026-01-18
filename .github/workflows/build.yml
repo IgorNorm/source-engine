@@ -1,10 +1,10 @@
-name: Build Source Engine (WAF) - Command Prompt Fix
+name: Debug Waf Scripts
 
 on: 
   workflow_dispatch:
 
 jobs:
-  build-windows:
+  debug-build:
     runs-on: windows-2019
 
     steps:
@@ -13,35 +13,34 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Show me the Wscript
+        # Цей крок виведе вміст головного скрипта, щоб я зрозумів, чому він не бачить MSVC
+        shell: powershell
+        run: |
+          Write-Host "--- START OF WSCRIPT ---"
+          if (Test-Path "wscript") { Get-Content "wscript" -Head 100 }
+          Write-Host "--- END OF WSCRIPT ---"
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.9'
 
-      - name: Setup MSVC
-        uses: microsoft/setup-msbuild@v2
-
-      - name: Download SDL2
-        run: |
-          curl -L https://github.com/libsdl-org/SDL/releases/download/release-2.28.5/SDL2-devel-2.28.5-VC.zip -o sdl2.zip
-          Expand-Archive sdl2.zip -DestinationPath .
-          if (Test-Path "SDL2-2.28.5") { Rename-Item "SDL2-2.28.5" "SDL2" }
-
-      - name: Configure and Build
-        # Використовуємо CMD замість PowerShell, для Waf це часто критично на Windows
+      - name: Configure and Build (Emergency Mode)
         shell: cmd
         env:
           CL: /DTIER0_DLL_EXPORT /DVSTDLIB_DLL_EXPORT /D_WINDOWS /DWIN32 /D_CRT_SECURE_NO_WARNINGS
           LINK: /SUBSYSTEM:WINDOWS,10.0
         run: |
-          :: 1. Ініціалізуємо середовище MSVC 2019 через рідний bat-файл
           call "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
           
-          :: 2. Очищуємо папку build
-          if exist build rd /s /q build
+          :: СПРОБА №1: Видаляємо папку MinGW з шляхів зовсім
+          set PATH=%PATH:C:\mingw64\bin;=%
           
-          :: 3. Запускаємо waf БЕЗ додаткових прапорців компілятора (нехай шукає сам)
-          python waf configure -T release --build-games=hl2 --sdl2=SDL2
+          :: СПРОБА №2: Примушуємо Waf завантажити msvc через прапорець load
+          python waf configure -T release --build-games=hl2 --sdl2=SDL2 --check-c-compiler=msvc --check-cxx-compiler=msvc
           
-          :: 4. Білд
-          python waf build -p
+          if %ERRORLEVEL% NEQ 0 (
+            echo CONFIG FAILED, PRINTING CONFIG.LOG...
+            type build\config.log
+          )
