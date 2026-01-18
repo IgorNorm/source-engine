@@ -1,11 +1,12 @@
-name: Build Source Engine (WAF) - Hard Fix
+name: Build Source Engine (WAF) - VS2019 Compatibility Fix
 
 on: 
   workflow_dispatch:
 
 jobs:
   build-windows:
-    runs-on: windows-2022 # Використовуємо 2022 для повної сумісності з MSVC 14.3
+    # Повертаємо 2019, бо твій Waf точно вміє з нею працювати
+    runs-on: windows-2019
 
     steps:
       - name: Checkout code
@@ -18,14 +19,15 @@ jobs:
         with:
           python-version: '3.9'
 
+      # Використовуємо MSVC 2019
       - name: Setup MSVC
         uses: microsoft/setup-msbuild@v2
 
-      # Ініціалізація x64 середовища
       - name: Setup MSVC Dev Cmd
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
+          toolset: 14.2 # Це відповідає Visual Studio 2019
 
       - name: Download SDL2
         run: |
@@ -35,25 +37,20 @@ jobs:
 
       - name: Configure and Build
         env:
-          # Ці дефайни вирішують проблему "порожніх DLL" (пункти 2 і 3 з ТЗ)
+          # Ці змінні «врятують» твій тихий краш і порожні ліби
           CL: "/DTIER0_DLL_EXPORT /DVSTDLIB_DLL_EXPORT /D_WINDOWS /DWIN32 /D_CRT_SECURE_NO_WARNINGS"
-          # Цей прапорець виправляє аномалію версії підсистеми 6.0 на 10.0
           LINK: "/SUBSYSTEM:WINDOWS,10.0"
         shell: pwsh
         run: |
-          # ПРИМУСОВЕ ВИДАЛЕННЯ MINGW З PATH
-          # Це гарантує, що waf не знайде gcc/g++ і буде змушений шукати cl.exe
+          # Видаляємо MinGW, щоб він не ліз першим
           $env:Path = ($env:Path -split ';' | Where-Object { $_ -notmatch 'mingw' }) -join ';'
           
-          # Очищення старого кешу
           if (Test-Path "build") { Remove-Item -Recurse -Force build }
 
-          # Конфігурація: 
-          # --msvc_targets="x64" вказує архітектуру
-          # --msvc_version="msvc 14.3" вказує на Visual Studio 2022
+          # Конфігурація під VS 2019
           python waf configure -T release --build-games=hl2 --sdl2=SDL2 `
             --check-c-compiler=msvc --check-cxx-compiler=msvc `
-            --msvc_targets="x64" --msvc_version="msvc 14.3"
+            --msvc_version="msvc 14.2"
 
           # Збірка
           python waf build -p
@@ -61,21 +58,19 @@ jobs:
       - name: Prepare Artifacts
         shell: pwsh
         run: |
-          $BinPath = "build/release_fixed"
+          $BinPath = "build/release_final"
           if (!(Test-Path $BinPath)) { New-Item -ItemType Directory -Path $BinPath }
           
-          # Копіюємо SDL2 (критично для запуску)
+          # Обов'язково кладемо SDL2.dll поруч
           if (Test-Path "SDL2/lib/x64/SDL2.dll") {
               Copy-Item "SDL2/lib/x64/SDL2.dll" -Destination $BinPath
           }
           
-          # Збираємо всі .dll та .exe з усіх папок build (щоб нічого не загубити)
+          # Збираємо всі скомпільовані файли
           Get-ChildItem -Path "build" -Include @("*.dll", "*.exe") -Recurse | Copy-Item -Destination $BinPath -Force
-          
-          Write-Host "Артефакти зібрано в $BinPath"
 
       - name: Upload Build
         uses: actions/upload-artifact@v4
         with:
-          name: SourceEngine-Windows-x64-Final
-          path: build/release_fixed/
+          name: SourceEngine-Windows-VS2019-Fixed
+          path: build/release_final/
