@@ -1,11 +1,11 @@
-name: Build Source Engine (WAF) - Full Archive
+name: Build Source Engine (WAF) - Fixed Environment
 
 on: 
-  workflow_dispatch: # Запуск вручну
+  workflow_dispatch:
 
 jobs:
   build-windows:
-    runs-on: windows-latest # Оновлено до актуальної версії
+    runs-on: windows-latest
 
     steps:
       - name: Checkout code
@@ -27,33 +27,30 @@ jobs:
           Expand-Archive sdl2.zip -DestinationPath .
           if (Test-Path "SDL2-2.28.5") { Rename-Item "SDL2-2.28.5" "SDL2" }
 
-      - name: Configure Waf
-        # Додано дефайни WIN32 та розширені прапорці лінкера для виправлення версії підсистеми (10.0)
-        # Також додано TIER0_DLL_EXPORT, щоб ліба не була "порожньою" всередині
+      - name: Configure and Build with Waf
+        # Використовуємо змінні оточення CL та LINK для примусового встановлення прапорців
+        env:
+          CL: "/DTIER0_DLL_EXPORT /DVSTDLIB_DLL_EXPORT /D_WINDOWS /DWIN32"
+          LINK: "/SUBSYSTEM:WINDOWS,10.0"
         run: |
-          python waf configure -T release --build-games=hl2 --sdl2=SDL2 `
-          --define="WIN32,_WINDOWS,TIER0_DLL_EXPORT,VSTDLIB_DLL_EXPORT" `
-          --linkflags="/SUBSYSTEM:WINDOWS,10.0"
+          python waf configure -T release --build-games=hl2 --sdl2=SDL2
+          python waf build -p
 
-      - name: Build with Waf
-        run: python waf build -p
-
-      - name: Prepare Artifacts (Copy Runtime DLLs)
-        # Цей крок копіює SDL2.dll безпосередньо в папку з екзешником, 
-        # щоб він не "палав" тихо при запуску.
+      - name: Prepare Artifacts
         run: |
-          $BinPath = "build/release" 
+          $BinPath = "build/release"
+          # Копіюємо SDL2.dll, бо без неї лаунчер не запуститься (silent crash)
           if (Test-Path "SDL2/lib/x64/SDL2.dll") {
+              if (!(Test-Path $BinPath)) { New-Item -ItemType Directory -Path $BinPath }
               Copy-Item "SDL2/lib/x64/SDL2.dll" -Destination $BinPath
-              Write-Host "SDL2.dll copied to $BinPath"
-          } else {
-              Write-Warning "SDL2.dll not found in expected path!"
           }
+          # Також копіюємо всі скомпільовані .dll та .exe
+          # WAF може класти їх у різні підпапки, тому шукаємо рекурсивно
+          Get-ChildItem -Path "build" -Filter "*.dll" -Recurse | Copy-Item -Destination $BinPath -Force
+          Get-ChildItem -Path "build" -Filter "*.exe" -Recurse | Copy-Item -Destination $BinPath -Force
 
       - name: Upload Full Build Folder
         uses: actions/upload-artifact@v4
         with:
-          name: Full-Build-Output-Fixed
-          path: |
-            build/release/
-          if-no-files-found: error
+          name: SourceEngine-Win64-Fixed
+          path: build/release/
