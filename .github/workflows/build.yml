@@ -1,10 +1,10 @@
-name: Debug Waf Scripts
+name: Build Source Engine - FINAL FIX
 
 on: 
   workflow_dispatch:
 
 jobs:
-  debug-build:
+  build:
     runs-on: windows-2019
 
     steps:
@@ -13,34 +13,49 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Show me the Wscript
-        # Цей крок виведе вміст головного скрипта, щоб я зрозумів, чому він не бачить MSVC
-        shell: powershell
-        run: |
-          Write-Host "--- START OF WSCRIPT ---"
-          if (Test-Path "wscript") { Get-Content "wscript" -Head 100 }
-          Write-Host "--- END OF WSCRIPT ---"
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.9'
 
-      - name: Configure and Build (Emergency Mode)
-        shell: cmd
-        env:
-          CL: /DTIER0_DLL_EXPORT /DVSTDLIB_DLL_EXPORT /D_WINDOWS /DWIN32 /D_CRT_SECURE_NO_WARNINGS
-          LINK: /SUBSYSTEM:WINDOWS,10.0
+      - name: Download SDL2
         run: |
+          curl -L https://github.com/libsdl-org/SDL/releases/download/release-2.28.5/SDL2-devel-2.28.5-VC.zip -o sdl2.zip
+          Expand-Archive sdl2.zip -DestinationPath .
+          if (Test-Path "SDL2-2.28.5") { Rename-Item "SDL2-2.28.5" "SDL2" }
+
+      - name: Configure and Build
+        shell: cmd
+        run: |
+          :: 1. Ініціалізуємо середовище MSVC
           call "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
           
-          :: СПРОБА №1: Видаляємо папку MinGW з шляхів зовсім
+          :: 2. Видаляємо MinGW з PATH, щоб Waf його не підхопив
           set PATH=%PATH:C:\mingw64\bin;=%
           
-          :: СПРОБА №2: Примушуємо Waf завантажити msvc через прапорець load
-          python waf configure -T release --build-games=hl2 --sdl2=SDL2 --check-c-compiler=msvc --check-cxx-compiler=msvc
+          :: 3. Очищення
+          if exist build rd /s /q build
           
-          if %ERRORLEVEL% NEQ 0 (
-            echo CONFIG FAILED, PRINTING CONFIG.LOG...
-            type build\config.log
-          )
+          :: 4. КОНФІГУРАЦІЯ (Критичні зміни тут)
+          :: Ми передаємо прапорці ТУТ, а не через ENV, щоб не ламати пошук msvc
+          python waf configure -T release --build-games=hl2 --sdl2=SDL2 ^
+            --cflags="/DTIER0_DLL_EXPORT /DVSTDLIB_DLL_EXPORT /D_WINDOWS /DWIN32 /D_CRT_SECURE_NO_WARNINGS" ^
+            --cxxflags="/DTIER0_DLL_EXPORT /DVSTDLIB_DLL_EXPORT /D_WINDOWS /DWIN32 /D_CRT_SECURE_NO_WARNINGS" ^
+            --linkflags="/SUBSYSTEM:WINDOWS,10.0"
+
+          :: 5. ЗБІРКА
+          python waf build -p
+
+      - name: Prepare Artifacts
+        shell: powershell
+        run: |
+          $BinPath = "build/release_fixed"
+          New-Item -ItemType Directory -Force -Path $BinPath
+          if (Test-Path "SDL2/lib/x64/SDL2.dll") { Copy-Item "SDL2/lib/x64/SDL2.dll" -Destination $BinPath }
+          Get-ChildItem -Path "build" -Include @("*.dll", "*.exe") -Recurse | Copy-Item -Destination $BinPath -Force
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: SourceEngine-Fixed-Final
+          path: build/release_fixed/
