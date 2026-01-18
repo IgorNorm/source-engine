@@ -5,7 +5,7 @@ on:
 
 jobs:
   build-windows:
-    runs-on: windows-2019
+    runs-on: windows-latest # Оновлено до актуальної версії
 
     steps:
       - name: Checkout code
@@ -28,19 +28,32 @@ jobs:
           if (Test-Path "SDL2-2.28.5") { Rename-Item "SDL2-2.28.5" "SDL2" }
 
       - name: Configure Waf
-        run: python waf configure -T release --build-games=hl2 --sdl2=SDL2
+        # Додано дефайни WIN32 та розширені прапорці лінкера для виправлення версії підсистеми (10.0)
+        # Також додано TIER0_DLL_EXPORT, щоб ліба не була "порожньою" всередині
+        run: |
+          python waf configure -T release --build-games=hl2 --sdl2=SDL2 `
+          --define="WIN32,_WINDOWS,TIER0_DLL_EXPORT,VSTDLIB_DLL_EXPORT" `
+          --linkflags="/SUBSYSTEM:WINDOWS,10.0"
 
       - name: Build with Waf
         run: python waf build -p
 
+      - name: Prepare Artifacts (Copy Runtime DLLs)
+        # Цей крок копіює SDL2.dll безпосередньо в папку з екзешником, 
+        # щоб він не "палав" тихо при запуску.
+        run: |
+          $BinPath = "build/release" 
+          if (Test-Path "SDL2/lib/x64/SDL2.dll") {
+              Copy-Item "SDL2/lib/x64/SDL2.dll" -Destination $BinPath
+              Write-Host "SDL2.dll copied to $BinPath"
+          } else {
+              Write-Warning "SDL2.dll not found in expected path!"
+          }
+
       - name: Upload Full Build Folder
         uses: actions/upload-artifact@v4
         with:
-          name: Full-Build-Output
-          # Архівуємо всю папку build та out (якщо вона створилася)
+          name: Full-Build-Output-Fixed
           path: |
-            build/
-            out/
-          # Якщо папки порожні, білд не впаде, але ми побачимо це в логах
-          if-no-files-found: warn 
-          
+            build/release/
+          if-no-files-found: error
