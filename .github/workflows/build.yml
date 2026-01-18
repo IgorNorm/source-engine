@@ -1,12 +1,11 @@
-name: Build Source Engine (WAF) - Full Fixed Archive
+name: Build Source Engine (WAF) - Hard Fix
 
 on: 
-  workflow_dispatch: # Запуск вручну
+  workflow_dispatch:
 
 jobs:
   build-windows:
-    # Використовуємо актуальну версію для кращої сумісності з SDK
-    runs-on: windows-latest
+    runs-on: windows-2022 # Використовуємо 2022 для повної сумісності з MSVC 14.3
 
     steps:
       - name: Checkout code
@@ -19,12 +18,10 @@ jobs:
         with:
           python-version: '3.9'
 
-      # 1. Встановлюємо MSBuild
       - name: Setup MSVC
         uses: microsoft/setup-msbuild@v2
 
-      # 2. Критичний крок: Ініціалізуємо змінні оточення Visual Studio (PATH, INCLUDE, LIB)
-      # Це змусить waf "побачити" cl.exe та link.exe замість gcc
+      # Ініціалізація x64 середовища
       - name: Setup MSVC Dev Cmd
         uses: ilammy/msvc-dev-cmd@v1
         with:
@@ -36,41 +33,49 @@ jobs:
           Expand-Archive sdl2.zip -DestinationPath .
           if (Test-Path "SDL2-2.28.5") { Rename-Item "SDL2-2.28.5" "SDL2" }
 
-      - name: Configure and Build with Waf
-        # 3. Передаємо параметри через змінні оточення CL та LINK.
-        # CL: Додає дефайни для експорту функцій у DLL (щоб вони не були порожніми).
-        # LINK: Примусово ставить версію підсистеми 10.0 (замість 6.0).
+      - name: Configure and Build
         env:
+          # Ці дефайни вирішують проблему "порожніх DLL" (пункти 2 і 3 з ТЗ)
           CL: "/DTIER0_DLL_EXPORT /DVSTDLIB_DLL_EXPORT /D_WINDOWS /DWIN32 /D_CRT_SECURE_NO_WARNINGS"
+          # Цей прапорець виправляє аномалію версії підсистеми 6.0 на 10.0
           LINK: "/SUBSYSTEM:WINDOWS,10.0"
+        shell: pwsh
         run: |
-          # Додаємо параметри --check-c-compiler, щоб waf не намагався використати gcc/mingw
-          python waf configure -T release --build-games=hl2 --sdl2=SDL2 `
-          --check-c-compiler=msvc --check-cxx-compiler=msvc `
-          --msvc_version="msvc 14.3" 
+          # ПРИМУСОВЕ ВИДАЛЕННЯ MINGW З PATH
+          # Це гарантує, що waf не знайде gcc/g++ і буде змушений шукати cl.exe
+          $env:Path = ($env:Path -split ';' | Where-Object { $_ -notmatch 'mingw' }) -join ';'
           
+          # Очищення старого кешу
+          if (Test-Path "build") { Remove-Item -Recurse -Force build }
+
+          # Конфігурація: 
+          # --msvc_targets="x64" вказує архітектуру
+          # --msvc_version="msvc 14.3" вказує на Visual Studio 2022
+          python waf configure -T release --build-games=hl2 --sdl2=SDL2 `
+            --check-c-compiler=msvc --check-cxx-compiler=msvc `
+            --msvc_targets="x64" --msvc_version="msvc 14.3"
+
+          # Збірка
           python waf build -p
 
       - name: Prepare Artifacts
-        # 4. Збираємо все докупи, включаючи SDL2.dll, без якої гра не запуститься
+        shell: pwsh
         run: |
           $BinPath = "build/release_fixed"
           if (!(Test-Path $BinPath)) { New-Item -ItemType Directory -Path $BinPath }
           
-          # Копіюємо SDL2
+          # Копіюємо SDL2 (критично для запуску)
           if (Test-Path "SDL2/lib/x64/SDL2.dll") {
               Copy-Item "SDL2/lib/x64/SDL2.dll" -Destination $BinPath
           }
           
-          # Рекурсивно збираємо всі скомпільовані бінарники (.dll та .exe) з папки build
-          Get-ChildItem -Path "build" -Filter "*.dll" -Recurse | Copy-Item -Destination $BinPath -Force
-          Get-ChildItem -Path "build" -Filter "*.exe" -Recurse | Copy-Item -Destination $BinPath -Force
+          # Збираємо всі .dll та .exe з усіх папок build (щоб нічого не загубити)
+          Get-ChildItem -Path "build" -Include @("*.dll", "*.exe") -Recurse | Copy-Item -Destination $BinPath -Force
           
-          Write-Host "Build artifacts prepared in $BinPath"
+          Write-Host "Артефакти зібрано в $BinPath"
 
-      - name: Upload Full Build Folder
+      - name: Upload Build
         uses: actions/upload-artifact@v4
         with:
-          name: SourceEngine-Windows-x64-Fixed
+          name: SourceEngine-Windows-x64-Final
           path: build/release_fixed/
-          if-no-files-found: error
