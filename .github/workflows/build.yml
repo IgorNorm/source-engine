@@ -1,4 +1,4 @@
-name: Build Source Engine (WAF) - Manual Toolchain Fix
+name: Build Source Engine (WAF) - Command Prompt Fix
 
 on: 
   workflow_dispatch:
@@ -18,10 +18,8 @@ jobs:
         with:
           python-version: '3.9'
 
-      - name: Setup MSVC Dev Cmd
-        uses: ilammy/msvc-dev-cmd@v1
-        with:
-          arch: x64
+      - name: Setup MSVC
+        uses: microsoft/setup-msbuild@v2
 
       - name: Download SDL2
         run: |
@@ -30,39 +28,20 @@ jobs:
           if (Test-Path "SDL2-2.28.5") { Rename-Item "SDL2-2.28.5" "SDL2" }
 
       - name: Configure and Build
+        # Використовуємо CMD замість PowerShell, для Waf це часто критично на Windows
+        shell: cmd
         env:
-          # Вказуємо прямі команди замість автопошуку msvc
-          CC: cl.exe
-          CXX: cl.exe
-          # Наші критичні виправлення експорту та підсистеми
-          CL: "/DTIER0_DLL_EXPORT /DVSTDLIB_DLL_EXPORT /D_WINDOWS /DWIN32 /D_CRT_SECURE_NO_WARNINGS"
-          LINK: "/SUBSYSTEM:WINDOWS,10.0"
-        shell: pwsh
+          CL: /DTIER0_DLL_EXPORT /DVSTDLIB_DLL_EXPORT /D_WINDOWS /DWIN32 /D_CRT_SECURE_NO_WARNINGS
+          LINK: /SUBSYSTEM:WINDOWS,10.0
         run: |
-          # Видаляємо MinGW, щоб він не був "планом Б"
-          $env:Path = ($env:Path -split ';' | Where-Object { $_ -notmatch 'mingw' }) -join ';'
+          :: 1. Ініціалізуємо середовище MSVC 2019 через рідний bat-файл
+          call "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
           
-          if (Test-Path "build") { Remove-Item -Recurse -Force build }
-
-          # УВАГА: Ми прибрали --check-c-compiler=msvc
-          # Ми просто запускаємо конфігурацію, Waf має підхопити CC/CXX з env
+          :: 2. Очищуємо папку build
+          if exist build rd /s /q build
+          
+          :: 3. Запускаємо waf БЕЗ додаткових прапорців компілятора (нехай шукає сам)
           python waf configure -T release --build-games=hl2 --sdl2=SDL2
-
-          # Якщо конфігурація пройшла, будуємо
+          
+          :: 4. Білд
           python waf build -p
-
-      - name: Prepare Artifacts
-        shell: pwsh
-        run: |
-          $BinPath = "build/release_final"
-          if (!(Test-Path $BinPath)) { New-Item -ItemType Directory -Path $BinPath }
-          if (Test-Path "SDL2/lib/x64/SDL2.dll") {
-              Copy-Item "SDL2/lib/x64/SDL2.dll" -Destination $BinPath
-          }
-          Get-ChildItem -Path "build" -Include @("*.dll", "*.exe") -Recurse | Copy-Item -Destination $BinPath -Force
-
-      - name: Upload Build
-        uses: actions/upload-artifact@v4
-        with:
-          name: SourceEngine-Manual-CC
-          path: build/release_final/
