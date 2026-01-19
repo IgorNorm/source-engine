@@ -1,23 +1,66 @@
-- name: Configure WAF for Portal
-      shell: cmd
-      run: |
-        call "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
-        if exist build rd /s /q build
-        python waf configure -T release --build-games=portal --sdl2=SDL2 --msvc_targets="x64"
+name: Build Portal Source Engine - Bypass Compiler Sucks
 
-    - name: Compile Client and Server DLLs
-      shell: cmd
-      run: |
-        call "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
-        set CFLAGS=/DTIER0_DLL_EXPORT /DVSTDLIB_DLL_EXPORT /D_WINDOWS /DWIN32 /D_CRT_SECURE_NO_WARNINGS
-        set CXXFLAGS=/DTIER0_DLL_EXPORT /DVSTDLIB_DLL_EXPORT /D_WINDOWS /DWIN32 /D_CRT_SECURE_NO_WARNINGS
-        set LDFLAGS=/SUBSYSTEM:WINDOWS,10.0
-        python waf build --targets=client,server -p
+on: 
+  workflow_dispatch:
 
-    - name: Upload Portal DLLs
-      uses: actions/upload-artifact@v4
-      with:
-        name: portal-dlls
-        path: |
-          build/**/client.dll
-          build/**/server.dll
+jobs:
+  build:
+    runs-on: windows-2019
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+
+      - name: Download SDL2
+        run: |
+          curl -L https://github.com/libsdl-org/SDL/releases/download/release-2.28.5/SDL2-devel-2.28.5-VC.zip -o sdl2.zip
+          Expand-Archive sdl2.zip -DestinationPath .
+          if (Test-Path "SDL2-2.28.5") { Rename-Item "SDL2-2.28.5" "SDL2" }
+
+      - name: Configure and Build
+        shell: cmd
+        run: |
+          :: 1. Ініціалізуємо MSVC 2019
+          call "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
+          
+          :: 2. Очищення
+          if exist build rd /s /q build
+          
+          :: 3. ЧИСТА КОНФІГУРАЦІЯ ПІД PORTAL
+          :: Тут ми змінили hl2 на portal
+          python waf configure -T release --build-games=portal --sdl2=SDL2 --msvc_targets="x64"
+          
+          if %ERRORLEVEL% NEQ 0 (
+            echo --- CONFIG FAILED. LOG: ---
+            type build\config.log
+            exit /b 1
+          )
+
+          :: 4. ЗБІРКА З ПРАПОРЦЯМИ (Тільки Client та Server)
+          set CFLAGS=/DTIER0_DLL_EXPORT /DVSTDLIB_DLL_EXPORT /D_WINDOWS /DWIN32 /D_CRT_SECURE_NO_WARNINGS
+          set CXXFLAGS=/DTIER0_DLL_EXPORT /DVSTDLIB_DLL_EXPORT /D_WINDOWS /DWIN32 /D_CRT_SECURE_NO_WARNINGS
+          set LDFLAGS=/SUBSYSTEM:WINDOWS,10.0
+          
+          :: Компілюємо саме ігрові бібліотеки
+          python waf build --targets=client,server -p
+
+      - name: Prepare Artifacts
+        shell: powershell
+        run: |
+          $BinPath = "build/portal_bin_result"
+          New-Item -ItemType Directory -Force -Path $BinPath
+          # Копіюємо тільки те, що реально потрібно для папки portal/bin
+          Get-ChildItem -Path "build" -Include @("client.dll", "server.dll") -Recurse | Copy-Item -Destination $BinPath -Force
+
+      - name: Upload Portal DLLs
+        uses: actions/upload-artifact@v4
+        with:
+          name: Portal-DLLs-Result
+          path: build/portal_bin_result/
