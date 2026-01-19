@@ -68,6 +68,3 @@ jobs:
         with:
           name: Portal-DLLs-Result
           path: portal_bin_final/
-        with:
-          name: Portal-DLLs-Result
-          path: build/portal_bin_result/
