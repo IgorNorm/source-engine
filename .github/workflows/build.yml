@@ -1,4 +1,4 @@
-name: Build Source Engine - Bypass Compiler Sucks
+name: Build Source Engine - Full Artifact Fix
 
 on: 
   workflow_dispatch:
@@ -27,41 +27,38 @@ jobs:
       - name: Configure and Build
         shell: cmd
         run: |
-          :: 1. Ініціалізуємо MSVC 2019
+          :: 1. Ініціалізація MSVC 2019
           call "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
           
-          :: 2. Очищення
+          :: 2. Чиста папка build
           if exist build rd /s /q build
           
-          :: 3. ЧИСТА КОНФІГУРАЦІЯ
-          :: Ми не ставимо CFLAGS тут, щоб пройти тест "Testing 64bit support"
+          :: 3. КОНФІГУРАЦІЯ (без прапорців CFLAGS)
+          :: Це дозволяє пройти тест "Testing 64bit support"
           python waf configure -T release --build-games=hl2 --sdl2=SDL2 --msvc_targets="x64"
           
           if %ERRORLEVEL% NEQ 0 (
-            echo --- CONFIG FAILED. LOG: ---
+            echo --- CONFIG FAILED ---
             type build\config.log
             exit /b 1
           )
 
-          :: 4. ЗБІРКА З ПРАПОРЦЯМИ
-          :: Передаємо прапорці саме тут. Waf додасть їх до основної збірки.
-          :: Це виправить tier0.dll і не зламає перевірку компілятора.
+          :: 4. ЗБІРКА (з прапорцями для виправлення Tier0)
           set CFLAGS=/DTIER0_DLL_EXPORT /DVSTDLIB_DLL_EXPORT /D_WINDOWS /DWIN32 /D_CRT_SECURE_NO_WARNINGS
           set CXXFLAGS=/DTIER0_DLL_EXPORT /DVSTDLIB_DLL_EXPORT /D_WINDOWS /DWIN32 /D_CRT_SECURE_NO_WARNINGS
           set LDFLAGS=/SUBSYSTEM:WINDOWS,10.0
           
           python waf build -p
 
-      - name: Prepare Artifacts
-        shell: powershell
+      - name: Copy SDL2 for Convenience
+        if: always()
         run: |
-          $BinPath = "build/release_final"
-          New-Item -ItemType Directory -Force -Path $BinPath
-          if (Test-Path "SDL2/lib/x64/SDL2.dll") { Copy-Item "SDL2/lib/x64/SDL2.dll" -Destination $BinPath }
-          Get-ChildItem -Path "build" -Include @("*.dll", "*.exe") -Recurse | Copy-Item -Destination $BinPath -Force
+          if exist SDL2\lib\x64\SDL2.dll copy SDL2\lib\x64\SDL2.dll build\
 
-      - name: Upload
+      - name: Upload Full Build Folder
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: SourceEngine-Final-Result
-          path: build/release_final/
+          name: SourceEngine-Full-Build
+          path: build/
+          
