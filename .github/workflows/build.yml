@@ -1,4 +1,4 @@
-name: Export SDL2 Only
+name: Export SDL2 Only - Fixed
 
 on: 
   workflow_dispatch:
@@ -10,18 +10,19 @@ jobs:
       - name: Download and Extract SDL2
         shell: powershell
         run: |
-          # Завантажуємо архів
-          curl -L https://github.com/libsdl-org/SDL/releases/download/release-2.28.5/SDL2-devel-2.28.5-VC.zip -o sdl2.zip
-          
           # Створюємо папку для експорту
-          New-Item -ItemType Directory -Path "SDL_Export"
+          New-Item -ItemType Directory -Path "SDL_Export" -Force
+          
+          # Завантажуємо файл (використовуємо Invoke-WebRequest напряму)
+          $url = "https://github.com/libsdl-org/SDL/releases/download/release-2.28.5/SDL2-devel-2.28.5-VC.zip"
+          Invoke-WebRequest -Uri $url -OutFile "sdl2.zip"
           
           # Розпаковуємо
-          Expand-Archive sdl2.zip -DestinationPath "temp_sdl"
+          Expand-Archive -Path "sdl2.zip" -DestinationPath "temp_sdl" -Force
           
-          # Копіюємо тільки x64 бінарники в папку експорту
-          # (Там буде SDL2.dll, SDL2.lib та SDL2main.lib)
-          Copy-Item "temp_sdl/SDL2-2.28.5/lib/x64/*" -Destination "SDL_Export" -Force
+          # Копіюємо тільки x64 бінарники
+          # Увага: перевіряємо точний шлях всередині архіву
+          Copy-Item "temp_sdl/*/lib/x64/*" -Destination "SDL_Export" -Force
 
       - name: Upload SDL2 Binaries
         uses: actions/upload-artifact@v4
