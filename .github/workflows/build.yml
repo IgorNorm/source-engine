@@ -34,7 +34,6 @@ jobs:
           if exist build rd /s /q build
           
           :: 3. ЧИСТА КОНФІГУРАЦІЯ ПІД PORTAL
-          :: Тут ми змінили hl2 на portal
           python waf configure -T release --build-games=portal --sdl2=SDL2 --msvc_targets="x64"
           
           if %ERRORLEVEL% NEQ 0 (
@@ -43,24 +42,32 @@ jobs:
             exit /b 1
           )
 
-          :: 4. ЗБІРКА З ПРАПОРЦЯМИ (Тільки Client та Server)
+          :: 4. ЗБІРКА З ПРАПОРЦЯМИ
           set CFLAGS=/DTIER0_DLL_EXPORT /DVSTDLIB_DLL_EXPORT /D_WINDOWS /DWIN32 /D_CRT_SECURE_NO_WARNINGS
           set CXXFLAGS=/DTIER0_DLL_EXPORT /DVSTDLIB_DLL_EXPORT /D_WINDOWS /DWIN32 /D_CRT_SECURE_NO_WARNINGS
           set LDFLAGS=/SUBSYSTEM:WINDOWS,10.0
           
-          :: Компілюємо саме ігрові бібліотеки
           python waf build --targets=client,server -p
 
       - name: Prepare Artifacts
         shell: powershell
         run: |
-          $BinPath = "build/portal_bin_result"
-          New-Item -ItemType Directory -Force -Path $BinPath
-          # Копіюємо тільки те, що реально потрібно для папки portal/bin
-          Get-ChildItem -Path "build" -Include @("client.dll", "server.dll") -Recurse | Copy-Item -Destination $BinPath -Force
+          # ФІКС: Створюємо папку окремо від build, щоб не було помилок копіювання
+          $ArtifactPath = "portal_bin_final"
+          if (Test-Path $ArtifactPath) { Remove-Item -Recurse -Force $ArtifactPath }
+          New-Item -ItemType Directory -Force -Path $ArtifactPath
+          
+          # Копіюємо тільки потрібні DLL
+          Get-ChildItem -Path "build" -Include @("client.dll", "server.dll") -Recurse | Copy-Item -Destination $ArtifactPath -Force
+          
+          Write-Host "--- Файли підготовлено до завантаження ---"
+          Get-ChildItem -Path $ArtifactPath
 
       - name: Upload Portal DLLs
         uses: actions/upload-artifact@v4
+        with:
+          name: Portal-DLLs-Result
+          path: portal_bin_final/
         with:
           name: Portal-DLLs-Result
           path: build/portal_bin_result/
