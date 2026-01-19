@@ -1,32 +1,33 @@
-name: Export SDL2 Only - Fixed
+- name: Configure WAF for Portal
+      shell: cmd
+      run: |
+        :: 1. Ініціалізація середовища
+        call "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
+        
+        :: 2. Чистка
+        if exist build rd /s /q build
+        
+        :: 3. КОНФІГУРАЦІЯ ПІД PORTAL
+        :: Змінили --build-games=hl2 на --build-games=portal
+        python waf configure -T release --build-games=portal --sdl2=SDL2 --msvc_targets="x64"
 
-on: 
-  workflow_dispatch:
+    - name: Compile Client and Server DLLs
+      shell: cmd
+      run: |
+        call "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
+        
+        :: Твої змінні для фіксу Tier0
+        set CFLAGS=/DTIER0_DLL_EXPORT /DVSTDLIB_DLL_EXPORT /D_WINDOWS /DWIN32 /D_CRT_SECURE_NO_WARNINGS
+        set CXXFLAGS=/DTIER0_DLL_EXPORT /DVSTDLIB_DLL_EXPORT /D_WINDOWS /DWIN32 /D_CRT_SECURE_NO_WARNINGS
+        set LDFLAGS=/SUBSYSTEM:WINDOWS,10.0
+        
+        :: Компілюємо тільки клієнт і сервер для економії часу
+        python waf build --targets=client,server -p
 
-jobs:
-  export_sdl:
-    runs-on: windows-2019
-    steps:
-      - name: Download and Extract SDL2
-        shell: powershell
-        run: |
-          # Створюємо папку для експорту
-          New-Item -ItemType Directory -Path "SDL_Export" -Force
-          
-          # Завантажуємо файл (використовуємо Invoke-WebRequest напряму)
-          $url = "https://github.com/libsdl-org/SDL/releases/download/release-2.28.5/SDL2-devel-2.28.5-VC.zip"
-          Invoke-WebRequest -Uri $url -OutFile "sdl2.zip"
-          
-          # Розпаковуємо
-          Expand-Archive -Path "sdl2.zip" -DestinationPath "temp_sdl" -Force
-          
-          # Копіюємо тільки x64 бінарники
-          # Увага: перевіряємо точний шлях всередині архіву
-          Copy-Item "temp_sdl/*/lib/x64/*" -Destination "SDL_Export" -Force
-
-      - name: Upload SDL2 Binaries
-        uses: actions/upload-artifact@v4
-        with:
-          name: SDL2-x64-Windows
-          path: SDL_Export/
-          
+    - name: Upload Portal DLLs
+      uses: actions/upload-artifact@v4
+      with:
+        name: portal-dlls
+        path: |
+          build/**/client.dll
+          build/**/server.dll
