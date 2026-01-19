@@ -1,27 +1,17 @@
 - name: Configure WAF for Portal
       shell: cmd
       run: |
-        :: 1. Ініціалізація середовища
         call "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
-        
-        :: 2. Чистка
         if exist build rd /s /q build
-        
-        :: 3. КОНФІГУРАЦІЯ ПІД PORTAL
-        :: Змінили --build-games=hl2 на --build-games=portal
         python waf configure -T release --build-games=portal --sdl2=SDL2 --msvc_targets="x64"
 
     - name: Compile Client and Server DLLs
       shell: cmd
       run: |
         call "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
-        
-        :: Твої змінні для фіксу Tier0
         set CFLAGS=/DTIER0_DLL_EXPORT /DVSTDLIB_DLL_EXPORT /D_WINDOWS /DWIN32 /D_CRT_SECURE_NO_WARNINGS
         set CXXFLAGS=/DTIER0_DLL_EXPORT /DVSTDLIB_DLL_EXPORT /D_WINDOWS /DWIN32 /D_CRT_SECURE_NO_WARNINGS
         set LDFLAGS=/SUBSYSTEM:WINDOWS,10.0
-        
-        :: Компілюємо тільки клієнт і сервер для економії часу
         python waf build --targets=client,server -p
 
     - name: Upload Portal DLLs
