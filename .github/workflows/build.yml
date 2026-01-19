@@ -1,64 +1,31 @@
-name: Build Source Engine - Full Artifact Fix
+name: Export SDL2 Only
 
 on: 
   workflow_dispatch:
 
 jobs:
-  build:
+  export_sdl:
     runs-on: windows-2019
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.9'
-
-      - name: Download SDL2
+      - name: Download and Extract SDL2
+        shell: powershell
         run: |
+          # Завантажуємо архів
           curl -L https://github.com/libsdl-org/SDL/releases/download/release-2.28.5/SDL2-devel-2.28.5-VC.zip -o sdl2.zip
-          Expand-Archive sdl2.zip -DestinationPath .
-          if (Test-Path "SDL2-2.28.5") { Rename-Item "SDL2-2.28.5" "SDL2" }
-
-      - name: Configure and Build
-        shell: cmd
-        run: |
-          :: 1. Ініціалізація MSVC 2019
-          call "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
           
-          :: 2. Чиста папка build
-          if exist build rd /s /q build
+          # Створюємо папку для експорту
+          New-Item -ItemType Directory -Path "SDL_Export"
           
-          :: 3. КОНФІГУРАЦІЯ (без прапорців CFLAGS)
-          :: Це дозволяє пройти тест "Testing 64bit support"
-          python waf configure -T release --build-games=hl2 --sdl2=SDL2 --msvc_targets="x64"
+          # Розпаковуємо
+          Expand-Archive sdl2.zip -DestinationPath "temp_sdl"
           
-          if %ERRORLEVEL% NEQ 0 (
-            echo --- CONFIG FAILED ---
-            type build\config.log
-            exit /b 1
-          )
+          # Копіюємо тільки x64 бінарники в папку експорту
+          # (Там буде SDL2.dll, SDL2.lib та SDL2main.lib)
+          Copy-Item "temp_sdl/SDL2-2.28.5/lib/x64/*" -Destination "SDL_Export" -Force
 
-          :: 4. ЗБІРКА (з прапорцями для виправлення Tier0)
-          set CFLAGS=/DTIER0_DLL_EXPORT /DVSTDLIB_DLL_EXPORT /D_WINDOWS /DWIN32 /D_CRT_SECURE_NO_WARNINGS
-          set CXXFLAGS=/DTIER0_DLL_EXPORT /DVSTDLIB_DLL_EXPORT /D_WINDOWS /DWIN32 /D_CRT_SECURE_NO_WARNINGS
-          set LDFLAGS=/SUBSYSTEM:WINDOWS,10.0
-          
-          python waf build -p
-
-      - name: Copy SDL2 for Convenience
-        if: always()
-        run: |
-          if exist SDL2\lib\x64\SDL2.dll copy SDL2\lib\x64\SDL2.dll build\
-
-      - name: Upload Full Build Folder
-        if: always()
+      - name: Upload SDL2 Binaries
         uses: actions/upload-artifact@v4
         with:
-          name: SourceEngine-Full-Build
-          path: build/
+          name: SDL2-x64-Windows
+          path: SDL_Export/
           
