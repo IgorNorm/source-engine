@@ -1,4 +1,4 @@
-name: Build Portal Source Engine - Bypass Compiler Sucks
+name: Build Portal Source Engine - ARM64 Windows Edition
 
 on: 
   workflow_dispatch:
@@ -27,44 +27,42 @@ jobs:
       - name: Configure and Build
         shell: cmd
         run: |
-          :: 1. Ініціалізуємо MSVC 2019
-          call "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
+          :: 1. Ініціалізуємо MSVC для ARM64
+          call "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\VC\Auxiliary\Build\vcvarsamd64_arm64.bat"
           
           :: 2. Очищення
           if exist build rd /s /q build
           
-          :: 3. ЧИСТА КОНФІГУРАЦІЯ ПІД PORTAL
-          python waf configure -T release --build-games=portal --sdl2=SDL2 --msvc_targets="x64"
+          :: 3. КОНФІГУРАЦІЯ ПІД ARM64
+          :: Змінено msvc_targets на arm64
+          python waf configure -T release --build-games=portal --sdl2=SDL2 --msvc_targets="arm64"
           
           if %ERRORLEVEL% NEQ 0 (
-            echo --- CONFIG FAILED. LOG: ---
+            echo --- CONFIG FAILED ---
             type build\config.log
             exit /b 1
           )
 
-          :: 4. ЗБІРКА З ПРАПОРЦЯМИ
-          set CFLAGS=/DTIER0_DLL_EXPORT /DVSTDLIB_DLL_EXPORT /D_WINDOWS /DWIN32 /D_CRT_SECURE_NO_WARNINGS
-          set CXXFLAGS=/DTIER0_DLL_EXPORT /DVSTDLIB_DLL_EXPORT /D_WINDOWS /DWIN32 /D_CRT_SECURE_NO_WARNINGS
-          set LDFLAGS=/SUBSYSTEM:WINDOWS,10.0
-          
-          python waf build --targets=client,server -p
+          :: 4. ПОВНА ЗБІРКА
+          :: Прибираємо --targets=client,server щоб зібрати EXE та всі DLL двигуна
+          python waf build -p
 
-      - name: Prepare Artifacts
+      - name: Prepare Full ARM64 Package
         shell: powershell
         run: |
-          # ФІКС: Створюємо папку окремо від build, щоб не було помилок копіювання
-          $ArtifactPath = "portal_bin_final"
-          if (Test-Path $ArtifactPath) { Remove-Item -Recurse -Force $ArtifactPath }
-          New-Item -ItemType Directory -Force -Path $ArtifactPath
+          $DestDir = "portal_arm64_full"
+          New-Item -ItemType Directory -Force -Path $DestDir
           
-          # Копіюємо тільки потрібні DLL
-          Get-ChildItem -Path "build" -Include @("client.dll", "server.dll") -Recurse | Copy-Item -Destination $ArtifactPath -Force
+          # Копіюємо всі виконувані файли та бібліотеки з усієї папки build
+          # Це включає hl2.exe (або portal.exe), engine.dll, client.dll, server.dll та інші
+          Get-ChildItem -Path "build" -Include @("*.exe", "*.dll") -Recurse | Copy-Item -Destination $DestDir -Force
           
-          Write-Host "--- Файли підготовлено до завантаження ---"
-          Get-ChildItem -Path $ArtifactPath
+          Write-Host "--- Пакет ARM64 готовий ---"
+          ls $DestDir
 
-      - name: Upload Portal DLLs
+      - name: Upload ARM64 Build
         uses: actions/upload-artifact@v4
         with:
-          name: Portal-DLLs-Result
-          path: portal_bin_final/
+          name: Portal-WoA-ARM64-Full
+          path: portal_arm64_full/
+          
