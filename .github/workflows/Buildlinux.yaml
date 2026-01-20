@@ -1,4 +1,4 @@
-name: Build Portal Source Engine - Linux ARM64 (Cross-Compile)
+name: Build Portal Source Engine - Linux ARM64
 
 on: 
   workflow_dispatch:
@@ -18,65 +18,51 @@ jobs:
         with:
           python-version: '3.9'
 
-      - name: Setup Multiarch and Install Cross-Compiler
+      - name: Setup Multiarch and Fix Repositories
         run: |
           # 1. Додаємо архітектуру arm64
           sudo dpkg --add-architecture arm64
 
-          # 2. ФІКС РЕПОЗИТОРІЇВ:
-          # Обмежуємо ВСІ існуючі джерела (http та https, .list та .sources) лише архітектурою amd64
-          # Це зупинить спроби завантажити arm64 з серверів, де їх немає (404 error)
-          sudo find /etc/apt/sources.list /etc/apt/sources.list.d/ -name "*.list" -type f -exec sudo sed -i 's/^deb /deb [arch=amd64] /g' {} +
+          # 2. Очищуємо та налаштовуємо репозиторії для Noble (24.04)
+          # Вимикаємо спроби стандартних репозиторіїв шукати arm64
+          sudo sed -i 's/^deb /deb [arch=amd64] /g' /etc/apt/sources.list || true
           
-          # Для Ubuntu 24.04 Noble фіксимо новий формат .sources
+          # Фікс для нового формату DEB822 (.sources), який використовується в Ubuntu 24.04
           if [ -d /etc/apt/sources.list.d/ ]; then
             sudo find /etc/apt/sources.list.d/ -name "*.sources" -type f -exec sudo sed -i 's/Architectures: .*/Architectures: amd64/g' {} +
+            # Додатково виправляємо випадок, коли Architectures взагалі немає
+            sudo find /etc/apt/sources.list.d/ -name "*.sources" -type f -exec sudo sed -i '/^Types: deb/a Architectures: amd64' {} +
           fi
 
-          # 3. Додаємо чисті ARM64 репозиторії (Ubuntu Ports)
+          # 3. Додаємо порти для ARM64 (це виправить 404 помилки з ваших логів)
           cat <<EOF | sudo tee /etc/apt/sources.list.d/arm64-ports.list
 deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble main restricted universe multiverse
 deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble-updates main restricted universe multiverse
 deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble-security main restricted universe multiverse
 EOF
 
-          # 4. Оновлюємо списки
+          # 4. Оновлюємо списки (тепер без 404)
           sudo apt-get update
 
-          # 5. Встановлюємо крос-компілятор та бібліотеки для ARM64
+          # 5. Встановлюємо інструменти крос-компіляції та ARM64 бібліотеки
           sudo apt-get install -y crossbuild-essential-arm64 pkg-config
           sudo apt-get install -y \
-            libsdl2-dev:arm64 \
-            libopenal-dev:arm64 \
-            libjpeg-dev:arm64 \
-            libpng-dev:arm64 \
-            libtiff-dev:arm64 \
-            libwebp-dev:arm64 \
-            libfreetype6-dev:arm64 \
-            libfontconfig1-dev:arm64 \
-            libcurl4-openssl-dev:arm64 \
-            zlib1g-dev:arm64 \
-            libbz2-dev:arm64 \
-            libglu1-mesa-dev:arm64 \
-            libgl1-mesa-dev:arm64 \
-            libx11-dev:arm64 \
-            libxext-dev:arm64 \
-            libxi-dev:arm64 \
-            libxrandr-dev:arm64 \
-            libxrender-dev:arm64 \
-            libxcursor-dev:arm64
+            libsdl2-dev:arm64 libopenal-dev:arm64 libjpeg-dev:arm64 \
+            libpng-dev:arm64 libtiff-dev:arm64 libwebp-dev:arm64 \
+            libfreetype6-dev:arm64 libfontconfig1-dev:arm64 \
+            libcurl4-openssl-dev:arm64 zlib1g-dev:arm64 libbz2-dev:arm64 \
+            libglu1-mesa-dev:arm64 libgl1-mesa-dev:arm64 libx11-dev:arm64 \
+            libxext-dev:arm64 libxi-dev:arm64 libxrandr-dev:arm64 \
+            libxrender-dev:arm64 libxcursor-dev:arm64
 
       - name: Configure for ARM64
         run: |
           rm -rf build
-          
-          # Змінні для крос-компіляції
           export CC=aarch64-linux-gnu-gcc
           export CXX=aarch64-linux-gnu-g++
           export AR=aarch64-linux-gnu-ar
           export PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig
           
-          # Запускаємо конфігурацію
           python3 waf configure -T release --build-games=portal --disable-warns
           
           if [ $? -ne 0 ]; then
