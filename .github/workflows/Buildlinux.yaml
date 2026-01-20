@@ -22,13 +22,10 @@ jobs:
           # 1. Додаємо архітектуру
           sudo dpkg --add-architecture arm64
 
-          # 2. Повне очищення, щоб прибрати 404 помилки (з файлу нвап.txt)
-          # Видаляємо старі налаштування, які шукають arm64 не там, де треба
+          # 2. Повне очищення репозиторіїв (як у попередньому кроці)
           sudo rm -f /etc/apt/sources.list.d/*.sources
           sudo rm -f /etc/apt/sources.list
 
-          # 3. Створюємо нові чисті джерела
-          # Основні дзеркала тільки для amd64
           cat <<EOF | sudo tee /etc/apt/sources.list
           deb [arch=amd64] http://azure.archive.ubuntu.com/ubuntu noble main restricted universe multiverse
           deb [arch=amd64] http://azure.archive.ubuntu.com/ubuntu noble-updates main restricted universe multiverse
@@ -36,17 +33,23 @@ jobs:
           deb [arch=amd64] http://security.ubuntu.com/ubuntu noble-security main restricted universe multiverse
           EOF
 
-          # Порти тільки для arm64 (це виправить 404 з вашого логу)
           cat <<EOF | sudo tee /etc/apt/sources.list.d/arm64-ports.list
           deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble main restricted universe multiverse
           deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble-updates main restricted universe multiverse
           deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble-security main restricted universe multiverse
           EOF
 
-          # 4. Оновлення та встановлення
+          # 3. Оновлення та виправлення конфліктів glib
           sudo apt-get update
-          sudo apt-get install -y crossbuild-essential-arm64 pkg-config
-          sudo apt-get install -y \
+          
+          # Встановлюємо інструменти крос-компіляції [cite: 66, 109]
+          sudo apt-get install -y crossbuild-essential-arm64 pkg-config 
+          
+          # СПЕЦІАЛЬНИЙ ФІКС: Встановлюємо рідний bin-пакет glib першим, щоб уникнути конфлікту 
+          sudo apt-get install -y libglib2.0-dev-bin
+
+          # 4. Встановлення бібліотек з ігноруванням конфліктних рекомендацій
+          sudo apt-get install -y --no-install-recommends \
             libsdl2-dev:arm64 libopenal-dev:arm64 libjpeg-dev:arm64 \
             libpng-dev:arm64 libtiff-dev:arm64 libwebp-dev:arm64 \
             libfreetype6-dev:arm64 libfontconfig1-dev:arm64 \
