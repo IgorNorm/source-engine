@@ -26,6 +26,7 @@ jobs:
             gcc-multilib \
             g++-multilib \
             libsdl2-dev \
+            libopenal-dev \
             libglu1-mesa-dev \
             libx11-dev \
             libxext-dev \
@@ -41,7 +42,6 @@ jobs:
           rm -rf build
           
           # 2. КОНФІГУРАЦІЯ
-          # Використовуємо -T release для оптимізації
           python3 waf configure -T release --build-games=portal
           
           if [ $? -ne 0 ]; then
@@ -51,7 +51,6 @@ jobs:
           fi
 
           # 3. ПОВНА ЗБІРКА
-          # Збираємо все (Launcher + Engine + Game libs)
           python3 waf build -p
 
       - name: Prepare Full Linux Package
@@ -59,16 +58,18 @@ jobs:
           DestDir="portal_linux_x64_full"
           mkdir -p $DestDir
           
-          # У Linux бінарники Source Engine зазвичай не мають розширень або мають .so
-          # Копіюємо основний пусковий файл (hl2), двигун та ігрові бібліотеки
+          # Копіюємо бінарники та бібліотеки .so
           find build -type f \( -executable -o -name "*.so" \) | xargs -I {} cp {} $DestDir/
           
+          # Створюємо архів, щоб зберегти права доступу (chmod +x)
+          tar -czvf portal_linux_build.tar.gz $DestDir/
+          
           echo "--- Збірка Linux готова ---"
-          ls -F $DestDir
+          ls -lh portal_linux_build.tar.gz
 
       - name: Upload Linux Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: Portal-Source-Linux-x64-Full
-          path: portal_linux_x64_full/
+          path: portal_linux_build.tar.gz
           
