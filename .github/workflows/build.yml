@@ -5,7 +5,7 @@ on:
 
 jobs:
   build:
-    runs-on: windows-2019
+    runs-on: windows-2022
 
     steps:
       - name: Checkout code
@@ -24,44 +24,45 @@ jobs:
           Expand-Archive sdl2.zip -DestinationPath .
           if (Test-Path "SDL2-2.28.5") { Rename-Item "SDL2-2.28.5" "SDL2" }
 
-      -      - name: Configure and Build
+      - name: Configure and Build
         shell: cmd
         run: |
-          :: 1. Ініціалізуємо MSVC для ARM64 (важливо викликати саме цей батник)
-          call "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\VC\Auxiliary\Build\vcvarsamd64_arm64.bat"
+          :: 1. Ініціалізуємо MSVC для ARM64
+          :: Використовуємо шлях для Visual Studio 2022, оскільки вона стабільніша для ARM
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsamd64_arm64.bat"
           
           :: 2. Очищення
           if exist build rd /s /q build
           
           :: 3. КОНФІГУРАЦІЯ ПІД ARM64
-          :: Додаємо --msvc_version="msvc 16.0" і примусово вказуємо msvc через CC/CXX
+          :: Примусово вказуємо використовувати MSVC (cl.exe), щоб ігнорувати MinGW/GCC
           set CC=cl.exe
           set CXX=cl.exe
           
-          python waf configure -T release --build-games=portal --sdl2=SDL2 --msvc_targets="arm64" --msvc_version="msvc 16.0"
+          :: Вказуємо параметри конфігурації
+          python waf configure -T release --build-games=portal --sdl2=SDL2 --msvc_targets="arm64" --msvc_version="msvc 17.0"
           
           if %ERRORLEVEL% NEQ 0 (
-            echo --- CONFIG FAILED. CHECKING LOG ---
-            type build\config.log
+            echo --- CONFIG FAILED. LOG: ---
+            if exist build\config.log type build\config.log
             exit /b 1
           )
 
-          :: 4. ПОВНА ЗБІРКА
+          :: 4. ПОВНА ЗБІРКА (Двигун + Гра + EXE)
           python waf build -p
-          
 
       - name: Prepare Full ARM64 Package
         shell: powershell
         run: |
           $DestDir = "portal_arm64_full"
+          if (Test-Path $DestDir) { Remove-Item -Recurse -Force $DestDir }
           New-Item -ItemType Directory -Force -Path $DestDir
           
-          # Копіюємо всі виконувані файли та бібліотеки з усієї папки build
-          # Це включає hl2.exe (або portal.exe), engine.dll, client.dll, server.dll та інші
+          # Копіюємо всі EXE та DLL з папки build
           Get-ChildItem -Path "build" -Include @("*.exe", "*.dll") -Recurse | Copy-Item -Destination $DestDir -Force
           
-          Write-Host "--- Пакет ARM64 готовий ---"
-          ls $DestDir
+          Write-Host "--- Пакет ARM64 підготовлено ---"
+          Get-ChildItem -Path $DestDir
 
       - name: Upload ARM64 Build
         uses: actions/upload-artifact@v4
