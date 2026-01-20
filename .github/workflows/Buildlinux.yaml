@@ -20,22 +20,30 @@ jobs:
 
       - name: Setup Multiarch and Install Cross-Compiler
         run: |
-          # 1. Додаємо архітектуру arm64 
+          # 1. Додаємо архітектуру arm64
           sudo dpkg --add-architecture arm64
 
-          # 2. Обмежуємо поточні репозиторії лише для amd64, щоб уникнути 404 помилок 
-          sudo sed -i 's/^deb http/deb [arch=amd64] http/g' /etc/apt/sources.list
+          # 2. ФІКС РЕПОЗИТОРІЇВ:
+          # Обмежуємо ВСІ існуючі джерела (http та https, .list та .sources) лише архітектурою amd64
+          # Це зупинить спроби завантажити arm64 з серверів, де їх немає (404 error)
+          sudo find /etc/apt/sources.list /etc/apt/sources.list.d/ -name "*.list" -type f -exec sudo sed -i 's/^deb /deb [arch=amd64] /g' {} +
           
-          # 3. Додаємо репозиторії Ubuntu Ports для ARM64 
-          # Використовуємо noble (24.04), як зазначено у твоїх логах [cite: 2]
-          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list
-          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble-updates main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list
-          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble-security main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list
+          # Для Ubuntu 24.04 Noble фіксимо новий формат .sources
+          if [ -d /etc/apt/sources.list.d/ ]; then
+            sudo find /etc/apt/sources.list.d/ -name "*.sources" -type f -exec sudo sed -i 's/Architectures: .*/Architectures: amd64/g' {} +
+          fi
 
-          # 4. Оновлюємо списки пакетів
+          # 3. Додаємо чисті ARM64 репозиторії (Ubuntu Ports)
+          cat <<EOF | sudo tee /etc/apt/sources.list.d/arm64-ports.list
+deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble main restricted universe multiverse
+deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble-updates main restricted universe multiverse
+deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble-security main restricted universe multiverse
+EOF
+
+          # 4. Оновлюємо списки
           sudo apt-get update
 
-          # 5. Встановлюємо крос-компілятор та ARM64 бібліотеки
+          # 5. Встановлюємо крос-компілятор та бібліотеки для ARM64
           sudo apt-get install -y crossbuild-essential-arm64 pkg-config
           sudo apt-get install -y \
             libsdl2-dev:arm64 \
@@ -62,7 +70,7 @@ jobs:
         run: |
           rm -rf build
           
-          # Налаштовуємо змінні для крос-компіляції
+          # Змінні для крос-компіляції
           export CC=aarch64-linux-gnu-gcc
           export CXX=aarch64-linux-gnu-g++
           export AR=aarch64-linux-gnu-ar
@@ -73,7 +81,7 @@ jobs:
           
           if [ $? -ne 0 ]; then
             echo "--- CONFIG FAILED ---"
-            if [ -f build/config.log ]; then cat build/config.log; fi
+            [ -f build/config.log ] && cat build/config.log
             exit 1
           fi
 
@@ -87,15 +95,9 @@ jobs:
         run: |
           DestDir="portal_linux_aarch64_full"
           mkdir -p $DestDir
-          
-          # Копіюємо всі бінарники та бібліотеки
           find build -type f \( -executable -o -name "*.so" \) | xargs -I {} cp {} $DestDir/
-          
-          # Створюємо архів tar.gz для збереження прав доступу
           tar -czvf portal_linux_aarch64.tar.gz $DestDir/
-          
           echo "--- ARM64 Build Complete ---"
-          ls -lh portal_linux_aarch64.tar.gz
 
       - name: Upload ARM64 Artifacts
         uses: actions/upload-artifact@v4
