@@ -22,7 +22,7 @@ jobs:
           # 1. Додаємо архітектуру
           sudo dpkg --add-architecture arm64
 
-          # 2. Повне очищення репозиторіїв (як у попередньому кроці)
+          # 2. Чистимо репозиторії (це вже працює, не міняємо)
           sudo rm -f /etc/apt/sources.list.d/*.sources
           sudo rm -f /etc/apt/sources.list
 
@@ -39,16 +39,16 @@ jobs:
           deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble-security main restricted universe multiverse
           EOF
 
-          # 3. Оновлення та виправлення конфліктів glib
           sudo apt-get update
-          
-          # Встановлюємо інструменти крос-компіляції [cite: 66, 109]
-          sudo apt-get install -y crossbuild-essential-arm64 pkg-config 
-          
-          # СПЕЦІАЛЬНИЙ ФІКС: Встановлюємо рідний bin-пакет glib першим, щоб уникнути конфлікту 
-          sudo apt-get install -y libglib2.0-dev-bin
 
-          # 4. Встановлення бібліотек з ігноруванням конфліктних рекомендацій
+          # 3. ФІКС КОНФЛІКТУ ВЕРСІЙ (GLib Version Sync)
+          # Отримуємо точну версію, яку хоче arm64, і змушуємо amd64 пакет стати такою ж версією
+          GLIB_VER=$(apt-cache show libglib2.0-dev:arm64 | grep Version | head -n 1 | awk '{print $2}')
+          echo "Matching GLib version found: $GLIB_VER"
+          sudo apt-get install -y --allow-downgrades libglib2.0-dev-bin=$GLIB_VER libglib2.0-0t64=$GLIB_VER libglib2.0-dev=$GLIB_VER
+
+          # 4. Встановлення всього іншого
+          sudo apt-get install -y crossbuild-essential-arm64 pkg-config
           sudo apt-get install -y --no-install-recommends \
             libsdl2-dev:arm64 libopenal-dev:arm64 libjpeg-dev:arm64 \
             libpng-dev:arm64 libtiff-dev:arm64 libwebp-dev:arm64 \
@@ -65,6 +65,7 @@ jobs:
           export CXX=aarch64-linux-gnu-g++
           export AR=aarch64-linux-gnu-ar
           export PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig
+          # Додаємо префікс для пошуку бібліотек
           python3 waf configure -T release --build-games=portal --disable-warns
 
       - name: Build All (ARM64)
