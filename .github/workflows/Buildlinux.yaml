@@ -20,17 +20,23 @@ jobs:
 
       - name: Setup Multiarch and Install Cross-Compiler
         run: |
-          # 1. Додаємо архітектуру arm64 до системи пакетів
+          # 1. Додаємо архітектуру arm64 
           sudo dpkg --add-architecture arm64
+
+          # 2. Обмежуємо поточні репозиторії лише для amd64, щоб уникнути 404 помилок 
+          sudo sed -i 's/^deb http/deb [arch=amd64] http/g' /etc/apt/sources.list
           
-          # 2. Оновлюємо списки пакетів для обох архітектур
-          # Використовуємо спеціальні дзеркала, якщо стандартні не знайдуть arm64 (але на github runner зазвичай працює стандарт)
+          # 3. Додаємо репозиторії Ubuntu Ports для ARM64 
+          # Використовуємо noble (24.04), як зазначено у твоїх логах [cite: 2]
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble-updates main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble-security main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list
+
+          # 4. Оновлюємо списки пакетів
           sudo apt-get update
-          
-          # 3. Встановлюємо крос-компілятор та інструменти збірки
+
+          # 5. Встановлюємо крос-компілятор та ARM64 бібліотеки
           sudo apt-get install -y crossbuild-essential-arm64 pkg-config
-          
-          # 4. Встановлюємо ARM64 версії всіх бібліотек (зверни увагу на :arm64 в кінці)
           sudo apt-get install -y \
             libsdl2-dev:arm64 \
             libopenal-dev:arm64 \
@@ -56,30 +62,25 @@ jobs:
         run: |
           rm -rf build
           
-          # ВАЖЛИВО: Вказуємо Waf використовувати саме крос-компілятори
+          # Налаштовуємо змінні для крос-компіляції
           export CC=aarch64-linux-gnu-gcc
           export CXX=aarch64-linux-gnu-g++
           export AR=aarch64-linux-gnu-ar
-          
-          # Вказуємо шлях до pkg-config для arm64, щоб він знайшов бібліотеки
           export PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig
           
-          echo "Starting Cross-Configuration..."
           # Запускаємо конфігурацію
           python3 waf configure -T release --build-games=portal --disable-warns
           
           if [ $? -ne 0 ]; then
             echo "--- CONFIG FAILED ---"
-            cat build/config.log
+            if [ -f build/config.log ]; then cat build/config.log; fi
             exit 1
           fi
 
       - name: Build All (ARM64)
         run: |
-          # Відновлюємо змінні оточення для збірки
           export CC=aarch64-linux-gnu-gcc
           export CXX=aarch64-linux-gnu-g++
-          
           python3 waf build -p
 
       - name: Prepare ARM64 Package
@@ -87,16 +88,13 @@ jobs:
           DestDir="portal_linux_aarch64_full"
           mkdir -p $DestDir
           
-          # Перевірка архітектури скомпільованого файлу (для логів)
-          echo "Checking file architecture:"
-          find build -name "launcher" -o -name "portal" | head -n 1 | xargs file
-          
-          # Копіюємо все (бінарники + .so)
+          # Копіюємо всі бінарники та бібліотеки
           find build -type f \( -executable -o -name "*.so" \) | xargs -I {} cp {} $DestDir/
           
-          # Архівуємо
+          # Створюємо архів tar.gz для збереження прав доступу
           tar -czvf portal_linux_aarch64.tar.gz $DestDir/
           
+          echo "--- ARM64 Build Complete ---"
           ls -lh portal_linux_aarch64.tar.gz
 
       - name: Upload ARM64 Artifacts
@@ -104,4 +102,3 @@ jobs:
         with:
           name: Portal-Source-Linux-ARM64-Full
           path: portal_linux_aarch64.tar.gz
-          
