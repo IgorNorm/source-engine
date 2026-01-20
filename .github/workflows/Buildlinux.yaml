@@ -1,4 +1,4 @@
-name: Build Portal ARM64
+name: Build Portal ARM64 (Docker Method)
 
 on:
   workflow_dispatch:
@@ -12,67 +12,30 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
         with:
-          python-version: '3.9'
+          platforms: arm64
 
-      - name: Setup Multiarch and Fix Repositories
+      - name: Build in ARM64 Container
         run: |
-          # 1. Додаємо архітектуру
-          sudo dpkg --add-architecture arm64
-
-          # 2. Чистимо репозиторії (це вже працює, не міняємо)
-          sudo rm -f /etc/apt/sources.list.d/*.sources
-          sudo rm -f /etc/apt/sources.list
-
-          cat <<EOF | sudo tee /etc/apt/sources.list
-          deb [arch=amd64] http://azure.archive.ubuntu.com/ubuntu noble main restricted universe multiverse
-          deb [arch=amd64] http://azure.archive.ubuntu.com/ubuntu noble-updates main restricted universe multiverse
-          deb [arch=amd64] http://azure.archive.ubuntu.com/ubuntu noble-backports main restricted universe multiverse
-          deb [arch=amd64] http://security.ubuntu.com/ubuntu noble-security main restricted universe multiverse
-          EOF
-
-          cat <<EOF | sudo tee /etc/apt/sources.list.d/arm64-ports.list
-          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble main restricted universe multiverse
-          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble-updates main restricted universe multiverse
-          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble-security main restricted universe multiverse
-          EOF
-
-          sudo apt-get update
-
-          # 3. ФІКС КОНФЛІКТУ ВЕРСІЙ (GLib Version Sync)
-          # Отримуємо точну версію, яку хоче arm64, і змушуємо amd64 пакет стати такою ж версією
-          GLIB_VER=$(apt-cache show libglib2.0-dev:arm64 | grep Version | head -n 1 | awk '{print $2}')
-          echo "Matching GLib version found: $GLIB_VER"
-          sudo apt-get install -y --allow-downgrades libglib2.0-dev-bin=$GLIB_VER libglib2.0-0t64=$GLIB_VER libglib2.0-dev=$GLIB_VER
-
-          # 4. Встановлення всього іншого
-          sudo apt-get install -y crossbuild-essential-arm64 pkg-config
-          sudo apt-get install -y --no-install-recommends \
-            libsdl2-dev:arm64 libopenal-dev:arm64 libjpeg-dev:arm64 \
-            libpng-dev:arm64 libtiff-dev:arm64 libwebp-dev:arm64 \
-            libfreetype6-dev:arm64 libfontconfig1-dev:arm64 \
-            libcurl4-openssl-dev:arm64 zlib1g-dev:arm64 libbz2-dev:arm64 \
-            libglu1-mesa-dev:arm64 libgl1-mesa-dev:arm64 libx11-dev:arm64 \
-            libxext-dev:arm64 libxi-dev:arm64 libxrandr-dev:arm64 \
-            libxrender-dev:arm64 libxcursor-dev:arm64
-
-      - name: Configure for ARM64
-        run: |
-          rm -rf build
-          export CC=aarch64-linux-gnu-gcc
-          export CXX=aarch64-linux-gnu-g++
-          export AR=aarch64-linux-gnu-ar
-          export PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig
-          # Додаємо префікс для пошуку бібліотек
-          python3 waf configure -T release --build-games=portal --disable-warns
-
-      - name: Build All (ARM64)
-        run: |
-          export CC=aarch64-linux-gnu-gcc
-          export CXX=aarch64-linux-gnu-g++
-          python3 waf build -p
+          docker run --rm --platform linux/arm64 \
+            -v ${{ github.workspace }}:/workspace \
+            -w /workspace \
+            arm64v8/ubuntu:24.04 /bin/bash -c "
+              export DEBIAN_FRONTEND=noninteractive && \
+              apt-get update && \
+              apt-get install -y python3 build-essential pkg-config \
+                libsdl2-dev libopenal-dev libjpeg-dev \
+                libpng-dev libtiff-dev libwebp-dev \
+                libfreetype6-dev libfontconfig1-dev \
+                libcurl4-openssl-dev zlib1g-dev libbz2-dev \
+                libglu1-mesa-dev libgl1-mesa-dev libx11-dev \
+                libxext-dev libxi-dev libxrandr-dev \
+                libxrender-dev libxcursor-dev && \
+              python3 waf configure -T release --build-games=portal --disable-warns && \
+              python3 waf build -p
+            "
 
       - name: Prepare and Upload Package
         run: |
@@ -83,5 +46,5 @@ jobs:
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Portal-ARM64
+          name: Portal-ARM64-Docker
           path: portal_arm64.tar.gz
