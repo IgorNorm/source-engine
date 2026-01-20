@@ -1,4 +1,4 @@
-name: Build Portal Linux - Binary Only (Launcher)
+name: Build Portal Source Engine - Linux ARM64 (Cross-Compile)
 
 on: 
   workflow_dispatch:
@@ -18,39 +18,90 @@ jobs:
         with:
           python-version: '3.9'
 
-      - name: Install Dependencies (CRITICAL)
-        # Навіть для бінарника треба ці ліби, щоб пройшла конфігурація
+      - name: Setup Multiarch and Install Cross-Compiler
         run: |
+          # 1. Додаємо архітектуру arm64 до системи пакетів
+          sudo dpkg --add-architecture arm64
+          
+          # 2. Оновлюємо списки пакетів для обох архітектур
+          # Використовуємо спеціальні дзеркала, якщо стандартні не знайдуть arm64 (але на github runner зазвичай працює стандарт)
           sudo apt-get update
+          
+          # 3. Встановлюємо крос-компілятор та інструменти збірки
+          sudo apt-get install -y crossbuild-essential-arm64 pkg-config
+          
+          # 4. Встановлюємо ARM64 версії всіх бібліотек (зверни увагу на :arm64 в кінці)
           sudo apt-get install -y \
-            build-essential \
-            gcc-multilib \
-            g++-multilib \
-            libsdl2-dev \
-            libopenal-dev \
-            libjpeg-dev \
-            libpng-dev \
-            libtiff-dev \
-            libwebp-dev \
-            libfreetype6-dev \
-            libfontconfig1-dev \
-            libcurl4-openssl-dev \
-            zlib1g-dev \
-            libbz2-dev \
-            libglu1-mesa-dev \
-            libgl1-mesa-dev \
-            libx11-dev \
-            libxext-dev \
-            libxi-dev \
-            libxrandr-dev \
-            libxrender-dev
+            libsdl2-dev:arm64 \
+            libopenal-dev:arm64 \
+            libjpeg-dev:arm64 \
+            libpng-dev:arm64 \
+            libtiff-dev:arm64 \
+            libwebp-dev:arm64 \
+            libfreetype6-dev:arm64 \
+            libfontconfig1-dev:arm64 \
+            libcurl4-openssl-dev:arm64 \
+            zlib1g-dev:arm64 \
+            libbz2-dev:arm64 \
+            libglu1-mesa-dev:arm64 \
+            libgl1-mesa-dev:arm64 \
+            libx11-dev:arm64 \
+            libxext-dev:arm64 \
+            libxi-dev:arm64 \
+            libxrandr-dev:arm64 \
+            libxrender-dev:arm64 \
+            libxcursor-dev:arm64
 
-      - name: Configure
+      - name: Configure for ARM64
         run: |
           rm -rf build
-          # Конфігурація все одно перевіряє все, тому залежності вище потрібні
+          
+          # ВАЖЛИВО: Вказуємо Waf використовувати саме крос-компілятори
+          export CC=aarch64-linux-gnu-gcc
+          export CXX=aarch64-linux-gnu-g++
+          export AR=aarch64-linux-gnu-ar
+          
+          # Вказуємо шлях до pkg-config для arm64, щоб він знайшов бібліотеки
+          export PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig
+          
+          echo "Starting Cross-Configuration..."
+          # Запускаємо конфігурацію
           python3 waf configure -T release --build-games=portal --disable-warns
           
           if [ $? -ne 0 ]; then
             echo "--- CONFIG FAILED ---"
-            
+            cat build/config.log
+            exit 1
+          fi
+
+      - name: Build All (ARM64)
+        run: |
+          # Відновлюємо змінні оточення для збірки
+          export CC=aarch64-linux-gnu-gcc
+          export CXX=aarch64-linux-gnu-g++
+          
+          python3 waf build -p
+
+      - name: Prepare ARM64 Package
+        run: |
+          DestDir="portal_linux_aarch64_full"
+          mkdir -p $DestDir
+          
+          # Перевірка архітектури скомпільованого файлу (для логів)
+          echo "Checking file architecture:"
+          find build -name "launcher" -o -name "portal" | head -n 1 | xargs file
+          
+          # Копіюємо все (бінарники + .so)
+          find build -type f \( -executable -o -name "*.so" \) | xargs -I {} cp {} $DestDir/
+          
+          # Архівуємо
+          tar -czvf portal_linux_aarch64.tar.gz $DestDir/
+          
+          ls -lh portal_linux_aarch64.tar.gz
+
+      - name: Upload ARM64 Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Portal-Source-Linux-ARM64-Full
+          path: portal_linux_aarch64.tar.gz
+          
