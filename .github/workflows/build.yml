@@ -24,28 +24,31 @@ jobs:
           Expand-Archive sdl2.zip -DestinationPath .
           if (Test-Path "SDL2-2.28.5") { Rename-Item "SDL2-2.28.5" "SDL2" }
 
-      - name: Configure and Build
+      -      - name: Configure and Build
         shell: cmd
         run: |
-          :: 1. Ініціалізуємо MSVC для ARM64
+          :: 1. Ініціалізуємо MSVC для ARM64 (важливо викликати саме цей батник)
           call "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\VC\Auxiliary\Build\vcvarsamd64_arm64.bat"
           
           :: 2. Очищення
           if exist build rd /s /q build
           
           :: 3. КОНФІГУРАЦІЯ ПІД ARM64
-          :: Змінено msvc_targets на arm64
-          python waf configure -T release --build-games=portal --sdl2=SDL2 --msvc_targets="arm64"
+          :: Додаємо --msvc_version="msvc 16.0" і примусово вказуємо msvc через CC/CXX
+          set CC=cl.exe
+          set CXX=cl.exe
+          
+          python waf configure -T release --build-games=portal --sdl2=SDL2 --msvc_targets="arm64" --msvc_version="msvc 16.0"
           
           if %ERRORLEVEL% NEQ 0 (
-            echo --- CONFIG FAILED ---
+            echo --- CONFIG FAILED. CHECKING LOG ---
             type build\config.log
             exit /b 1
           )
 
           :: 4. ПОВНА ЗБІРКА
-          :: Прибираємо --targets=client,server щоб зібрати EXE та всі DLL двигуна
           python waf build -p
+          
 
       - name: Prepare Full ARM64 Package
         shell: powershell
