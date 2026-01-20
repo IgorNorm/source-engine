@@ -1,4 +1,4 @@
-name: Build Portal Source Engine - Linux x64 Ultimate Edition
+name: Build Portal Linux - Binary Only (Launcher)
 
 on: 
   workflow_dispatch:
@@ -18,7 +18,8 @@ jobs:
         with:
           python-version: '3.9'
 
-      - name: Install ALL Dependencies
+      - name: Install Dependencies (CRITICAL)
+        # Навіть для бінарника треба ці ліби, щоб пройшла конфігурація
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -42,46 +43,14 @@ jobs:
             libxext-dev \
             libxi-dev \
             libxrandr-dev \
-            libxrender-dev \
-            libxinerama-dev \
-            libxcursor-dev
+            libxrender-dev
 
-      - name: Configure and Build
+      - name: Configure
         run: |
-          # 1. Очищення
           rm -rf build
-          
-          # 2. КОНФІГУРАЦІЯ
-          # Додав --disable-warns, щоб воно не зупинялося через дрібні попередження компілятора
+          # Конфігурація все одно перевіряє все, тому залежності вище потрібні
           python3 waf configure -T release --build-games=portal --disable-warns
           
           if [ $? -ne 0 ]; then
             echo "--- CONFIG FAILED ---"
-            cat build/config.log
-            exit 1
-          fi
-
-          # 3. ПОВНА ЗБІРКА
-          python3 waf build -p
-
-      - name: Prepare Full Linux Package
-        run: |
-          DestDir="portal_linux_x64_full"
-          mkdir -p $DestDir
-          
-          # Копіюємо бінарники (без розширення) та бібліотеки .so
-          # Шукаємо у build файли, які є виконуваними або закінчуються на .so
-          find build -type f \( -executable -o -name "*.so" \) | xargs -I {} cp {} $DestDir/
-          
-          # Створюємо архів tar.gz (зберігає права chmod +x, що критично для Linux)
-          tar -czvf portal_linux_build.tar.gz $DestDir/
-          
-          echo "--- Збірка Linux готова ---"
-          ls -lh portal_linux_build.tar.gz
-
-      - name: Upload Linux Artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: Portal-Source-Linux-x64-Full
-          path: portal_linux_build.tar.gz
-          
+            
