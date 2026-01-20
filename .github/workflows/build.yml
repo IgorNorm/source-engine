@@ -1,4 +1,4 @@
-name: Build Portal Source Engine - ARM64 Windows Edition
+name: Build Portal Source Engine - AMD64 Full Edition
 
 on: 
   workflow_dispatch:
@@ -27,46 +27,42 @@ jobs:
       - name: Configure and Build
         shell: cmd
         run: |
-          :: 1. Ініціалізуємо MSVC для ARM64 (Крос-компіляція)
-          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsamd64_arm64.bat"
+          :: 1. Ініціалізуємо MSVC для x64
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
           
           :: 2. Очищення
           if exist build rd /s /q build
           
           :: 3. КОНФІГУРАЦІЯ
-          :: Скидаємо змінні, щоб waf не плутав MSVC з GCC
-          set CC=
-          set CXX=
-          
-          :: Запускаємо конфігурацію. Waf сам знайде cl.exe версії 17.x для ARM64
-          python waf configure -T release --build-games=portal --sdl2=SDL2 --msvc_targets="arm64"
+          :: Збираємо під x64 (AMD64)
+          python waf configure -T release --build-games=portal --sdl2=SDL2 --msvc_targets="x64"
           
           if %ERRORLEVEL% NEQ 0 (
-            echo --- CONFIG FAILED. LOG: ---
+            echo --- CONFIG FAILED ---
             if exist build\config.log type build\config.log
             exit /b 1
           )
 
-          :: 4. ПОВНА ЗБІРКА (Launcher + Engine + Game)
+          :: 4. ПОВНА ЗБІРКА
+          :: Збираємо все (включаючи exe-шник та всі dll двигуна)
           python waf build -p
 
-      - name: Prepare Full ARM64 Package
+      - name: Prepare Full Package
         shell: powershell
         run: |
-          $DestDir = "portal_arm64_full"
+          $DestDir = "portal_x64_full_build"
           if (Test-Path $DestDir) { Remove-Item -Recurse -Force $DestDir }
           New-Item -ItemType Directory -Force -Path $DestDir
           
-          # Збираємо всі необхідні бінарники
-          Write-Host "Копіювання файлів..."
+          # Копіюємо всі exe та dll (hl2.exe, engine.dll, client.dll, server.dll тощо)
           Get-ChildItem -Path "build" -Include @("*.exe", "*.dll") -Recurse | Copy-Item -Destination $DestDir -Force
           
-          Write-Host "--- Пакет ARM64 готовий ---"
+          Write-Host "--- Збірка x64 готова ---"
           Get-ChildItem -Path $DestDir
 
-      - name: Upload ARM64 Build
+      - name: Upload Build Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Portal-WoA-ARM64-Full
-          path: portal_arm64_full/
+          name: Portal-Source-x64-Full
+          path: portal_x64_full_build/
           
