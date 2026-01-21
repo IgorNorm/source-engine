@@ -1,0 +1,43 @@
+name: Build Episodic AMD64 (Native)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04  # Використовуємо нативну AMD64 систему
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3 build-essential pkg-config \
+            libsdl2-dev libopenal-dev libjpeg-dev \
+            libpng-dev libtiff-dev libwebp-dev \
+            libfreetype6-dev libfontconfig1-dev \
+            libcurl4-openssl-dev zlib1g-dev libbz2-dev \
+            libglu1-mesa-dev libgl1-mesa-dev libx11-dev \
+            libxext-dev libxi-dev libxrandr-dev \
+            libxrender-dev libxcursor-dev
+
+      - name: Build Episodic
+        run: |
+          python3 waf configure -T release --build-games=episodic --disable-warns
+          python3 waf build -p
+
+      - name: Prepare and Upload Package
+        run: |
+          mkdir -p out
+          # Копіюємо бінарні файли та бібліотеки
+          find build -type f \( -executable -o -name "*.so" \) | xargs -I {} cp {} out/
+          tar -czvf episodic_amd64.tar.gz out/
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Episodic-AMD64
+          path: episodic_amd64.tar.gz
