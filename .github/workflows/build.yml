@@ -34,7 +34,7 @@ jobs:
           
           :: 3. КОНФІГУРАЦІЯ
           :: Змінюємо build-games на hl2 та episodic (це і є Ep1 та Ep2)
-          python waf configure -T release --build-games=hl2,episodic --sdl2=SDL2 --msvc_targets="x64"
+          python waf configure -T release --build-games="episodic" --sdl2=SDL2 --msvc_targets="x64"
           
           if %ERRORLEVEL% NEQ 0 (
             echo --- CONFIG FAILED ---
