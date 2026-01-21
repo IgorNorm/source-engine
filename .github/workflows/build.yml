@@ -1,12 +1,11 @@
-name: Build Portal Source Engine - AMD64 Full Edition
+name: Build HL2 Episodes Source Engine - AMD64 Full Edition
 
-on: 
+on:
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: windows-2022
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -34,35 +33,34 @@ jobs:
           if exist build rd /s /q build
           
           :: 3. КОНФІГУРАЦІЯ
-          :: Збираємо під x64 (AMD64)
-          python waf configure -T release --build-games=portal --sdl2=SDL2 --msvc_targets="x64"
+          :: Змінюємо build-games на hl2 та episodic (це і є Ep1 та Ep2)
+          python waf configure -T release --build-games=hl2,episodic --sdl2=SDL2 --msvc_targets="x64"
           
           if %ERRORLEVEL% NEQ 0 (
             echo --- CONFIG FAILED ---
             if exist build\config.log type build\config.log
             exit /b 1
           )
-
+          
           :: 4. ПОВНА ЗБІРКА
-          :: Збираємо все (включаючи exe-шник та всі dll двигуна)
           python waf build -p
 
       - name: Prepare Full Package
         shell: powershell
         run: |
-          $DestDir = "portal_x64_full_build"
+          $DestDir = "episodes_x64_full_build"
           if (Test-Path $DestDir) { Remove-Item -Recurse -Force $DestDir }
           New-Item -ItemType Directory -Force -Path $DestDir
           
-          # Копіюємо всі exe та dll (hl2.exe, engine.dll, client.dll, server.dll тощо)
+          # Копіюємо всі exe та dll
+          # Waf зазвичай кладе їх у підпапки build/release/
           Get-ChildItem -Path "build" -Include @("*.exe", "*.dll") -Recurse | Copy-Item -Destination $DestDir -Force
           
-          Write-Host "--- Збірка x64 готова ---"
+          Write-Host "--- Збірка Episodic x64 готова ---"
           Get-ChildItem -Path $DestDir
 
       - name: Upload Build Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Portal-Source-x64-Full
-          path: portal_x64_full_build/
-          
+          name: HL2-Episodes-Source-x64-Full
+          path: episodes_x64_full_build/
