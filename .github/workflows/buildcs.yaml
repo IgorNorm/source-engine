@@ -1,3 +1,6 @@
+# Build HL2 Episodes Source Engine - AMD64 Full Edition (CS:S)
+# Includes robust vswhere detection fix and proper step output for the archive.
+
 name: Build HL2 Episodes Source Engine - AMD64 Full Edition (CS:S)
 
 on:
@@ -34,47 +37,66 @@ jobs:
           if ($dirs.Count -gt 0) {
             $p = Join-Path -Path 'SDL2' -ChildPath $dirs[0].Name
             Write-Host "SDL extracted under $p"
-            # ensure we have include/ and Lib/x64
-            Write-Host "Contents:"
+            Write-Host "Contents (sample):"
             Get-ChildItem -Path $p -Recurse -Depth 2 | Select-Object -First 20 | ForEach-Object { Write-Host $_.FullName }
-            # set env var with full path
             Write-Host "Setting SDL2_DIR environment variable"
             echo "SDL2_DIR=$((Resolve-Path $p).Path)" >> $env:GITHUB_ENV
           } else {
-            # maybe archive extracted directly into SDL2/include, SDL2/lib
             Write-Host "No nested SDL2-xxxxx folder found; assuming SDL2 dir is 'SDL2'"
             echo "SDL2_DIR=$((Resolve-Path .\SDL2).Path)" >> $env:GITHUB_ENV
           }
 
       - name: Locate Visual Studio (vswhere) and set up MSVC env (x64)
+        id: locate_vs
         shell: pwsh
         run: |
-          # vswhere should be present on hosted runner; fallback to well-known path otherwise
-          $vswhere = "$env:ProgramFiles(x86)\Microsoft Visual Studio\Installer\vswhere.exe"
-          if (-not (Test-Path $vswhere)) {
-            Write-Host "vswhere not found at $vswhere. Trying common installation..."
-            $vswhere = "$env:ProgramFiles(x86)\Microsoft VisualStudio\Installer\vswhere.exe"
+          # Try to find vswhere via Get-Command (if in PATH)
+          $vswhereCmd = (Get-Command vswhere.exe -ErrorAction SilentlyContinue).Source
+          $checkPaths = @(
+            "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe",
+            "${env:ProgramFiles}\Microsoft Visual Studio\Installer\vswhere.exe",
+            "C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe",
+            "C:\Program Files\Microsoft Visual Studio\Installer\vswhere.exe"
+          )
+
+          if (-not $vswhereCmd) {
+            foreach ($p in $checkPaths) {
+              if (Test-Path $p) { $vswhereCmd = $p; break }
+            }
           }
-          if (-not (Test-Path $vswhere)) {
+
+          if (-not $vswhereCmd) {
             Write-Error "vswhere.exe not found on runner — cannot detect Visual Studio. Aborting."
+            Write-Host "Tried locations:"
+            $checkPaths | ForEach-Object { Write-Host "  $_" }
             exit 1
           }
-          $instPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+
+          Write-Host "Using vswhere at: $vswhereCmd"
+
+          # Find the latest VS installation with VC tools
+          $instPath = & $vswhereCmd -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
           if (-not $instPath) {
-            Write-Error "No suitable VS installation found (vc tools)."
+            # try less strict search (some hosted images may have different components)
+            $instPath = & $vswhereCmd -latest -products * -property installationPath
+          }
+
+          if (-not $instPath) {
+            Write-Error "Could not locate a Visual Studio installation with VC tools via vswhere."
             exit 1
           }
-          Write-Host "VS installation: $instPath"
+
+          Write-Host "Visual Studio installation path: $instPath"
+
           $vcvars = Join-Path $instPath "VC\Auxiliary\Build\vcvarsall.bat"
           if (-not (Test-Path $vcvars)) {
-            Write-Error "vcvarsall.bat not found at $vcvars"
+            Write-Error "vcvarsall.bat not found at expected location: $vcvars"
             exit 1
           }
-          # export path to env for subsequent steps
+
+          Write-Host "vcvarsall found at: $vcvars"
+          # Export path for later steps
           echo "VCVARS_PATH=$vcvars" >> $env:GITHUB_ENV
-          # Optionally show cl.exe version for debugging
-          & $vcvars amd64
-          cl.exe /? 2>&1 | Select-Object -First 3 | ForEach-Object { Write-Host $_ }
 
       - name: Configure and Build (MSVC x64)
         shell: pwsh
@@ -82,13 +104,12 @@ jobs:
           SDL2_DIR: ${{ env.SDL2_DIR }}
           VCVARS_PATH: ${{ env.VCVARS_PATH }}
         run: |
-          set -e
           Write-Host "Starting configuration and build (MSVC x64)..."
 
           # call vcvarsall to set up environment for MSVC (amd64)
           & "$env:VCVARS_PATH" amd64
 
-          # ensure python command is python3 or python
+          # choose python command
           $py = "python"
           if ((Get-Command python3 -ErrorAction SilentlyContinue)) { $py = "python3" }
 
@@ -130,6 +151,7 @@ jobs:
           }
 
       - name: Prepare Full Package (copy executables, DLLs, and cstrike content)
+        id: prepare_full_package
         shell: pwsh
         run: |
           $dest = "episodes_x64_full_build"
@@ -147,7 +169,7 @@ jobs:
           }
 
           # Copy cstrike (game) content if exists (so server/client has assets)
-          $possibleGameDirs = @("game\cstrike","game\cstrike_panorama","game\cstrike_hd") 
+          $possibleGameDirs = @("game\cstrike","game\cstrike_panorama","game\cstrike_hd")
           foreach ($g in $possibleGameDirs) {
             if (Test-Path $g) {
               Write-Host "Copying game folder $g"
@@ -166,7 +188,7 @@ jobs:
           Write-Host "--- Files to be packaged ---"
           Get-ChildItem -Path $dest -Recurse | Select-Object -First 200 | ForEach-Object { Write-Host $_.FullName }
 
-          # Create zip archive
+          # Create zip archive and set step output
           $zipName = "HL2-Episodes-Source-x64-Full-$(Get-Date -Format yyyyMMdd_HHmmss).zip"
           Write-Host "Creating archive $zipName ..."
           Compress-Archive -Path "$dest\*" -DestinationPath $zipName -Force
@@ -177,4 +199,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: HL2-Episodes-Source-x64-Full
-          path: ${{ steps.prepare_full_package.outputs.ARCHIVE || 'HL2-Episodes-Source-x64-Full-*.zip' }}
+          path: ${{ steps.prepare_full_package.outputs.ARCHIVE }}
