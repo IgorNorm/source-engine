@@ -1,5 +1,5 @@
 # Build HL2 Episodes Source Engine - AMD64 Full Edition (CS:S)
-# Includes robust vswhere detection fix and proper step output for the archive.
+# Fix: correct passing of -j argument to waf on PowerShell (avoid literal '$proc').
 
 name: Build HL2 Episodes Source Engine - AMD64 Full Edition (CS:S)
 
@@ -142,9 +142,19 @@ jobs:
 
           # Determine number of logical processors and use for parallel build
           $proc = [int]$env:NUMBER_OF_PROCESSORS
-          if (-not $proc) { $proc = 2 }
+          if (-not $proc -or $proc -lt 1) {
+            # fallback: query WMI
+            try {
+              $proc = (Get-CimInstance -ClassName Win32_ComputerSystem).NumberOfLogicalProcessors
+            } catch {
+              $proc = 2
+            }
+          }
+          if (-not $proc -or $proc -lt 1) { $proc = 2 }
           Write-Host "Building with $proc parallel jobs..."
-          & $py waf build -j$proc -p
+
+          # Invoke waf via python with explicit argument array so $proc expands reliably
+          & $py 'waf' 'build' "-j$proc" '-p'
           if ($LASTEXITCODE -ne 0) {
             Write-Error "Build failed (waf)."
             exit $LASTEXITCODE
@@ -177,7 +187,7 @@ jobs:
             }
           }
 
-          # Also copy common game assets if present (materials, models, maps)
+          # Also copy common game assets if present (materials, models, maps, sound)
           foreach ($d in @("materials","models","maps","sound")) {
             if (Test-Path $d) {
               Write-Host "Copying $d"
