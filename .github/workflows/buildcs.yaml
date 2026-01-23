@@ -1,0 +1,180 @@
+name: Build HL2 Episodes Source Engine - AMD64 Full Edition (CS:S)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout code (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Python 3.9
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+
+      - name: Download and extract SDL2 (VC zip)
+        shell: pwsh
+        run: |
+          $url = 'https://github.com/libsdl-org/SDL/releases/download/release-2.28.5/SDL2-devel-2.28.5-VC.zip'
+          $zip = 'sdl2.zip'
+          Write-Host "Downloading $url ..."
+          Invoke-WebRequest -Uri $url -OutFile $zip
+          Write-Host "Extracting $zip ..."
+          Expand-Archive -Path $zip -DestinationPath 'SDL2' -Force
+          Remove-Item $zip -Force
+          # SDL2 for Visual C usually extracts into folder like SDL2-2.28.5. Normalize to SDL2
+          $dirs = Get-ChildItem -Directory -Path 'SDL2' | Where-Object { $_.Name -match 'SDL2' }
+          if ($dirs.Count -gt 0) {
+            $p = Join-Path -Path 'SDL2' -ChildPath $dirs[0].Name
+            Write-Host "SDL extracted under $p"
+            # ensure we have include/ and Lib/x64
+            Write-Host "Contents:"
+            Get-ChildItem -Path $p -Recurse -Depth 2 | Select-Object -First 20 | ForEach-Object { Write-Host $_.FullName }
+            # set env var with full path
+            Write-Host "Setting SDL2_DIR environment variable"
+            echo "SDL2_DIR=$((Resolve-Path $p).Path)" >> $env:GITHUB_ENV
+          } else {
+            # maybe archive extracted directly into SDL2/include, SDL2/lib
+            Write-Host "No nested SDL2-xxxxx folder found; assuming SDL2 dir is 'SDL2'"
+            echo "SDL2_DIR=$((Resolve-Path .\SDL2).Path)" >> $env:GITHUB_ENV
+          }
+
+      - name: Locate Visual Studio (vswhere) and set up MSVC env (x64)
+        shell: pwsh
+        run: |
+          # vswhere should be present on hosted runner; fallback to well-known path otherwise
+          $vswhere = "$env:ProgramFiles(x86)\Microsoft Visual Studio\Installer\vswhere.exe"
+          if (-not (Test-Path $vswhere)) {
+            Write-Host "vswhere not found at $vswhere. Trying common installation..."
+            $vswhere = "$env:ProgramFiles(x86)\Microsoft VisualStudio\Installer\vswhere.exe"
+          }
+          if (-not (Test-Path $vswhere)) {
+            Write-Error "vswhere.exe not found on runner — cannot detect Visual Studio. Aborting."
+            exit 1
+          }
+          $instPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $instPath) {
+            Write-Error "No suitable VS installation found (vc tools)."
+            exit 1
+          }
+          Write-Host "VS installation: $instPath"
+          $vcvars = Join-Path $instPath "VC\Auxiliary\Build\vcvarsall.bat"
+          if (-not (Test-Path $vcvars)) {
+            Write-Error "vcvarsall.bat not found at $vcvars"
+            exit 1
+          }
+          # export path to env for subsequent steps
+          echo "VCVARS_PATH=$vcvars" >> $env:GITHUB_ENV
+          # Optionally show cl.exe version for debugging
+          & $vcvars amd64
+          cl.exe /? 2>&1 | Select-Object -First 3 | ForEach-Object { Write-Host $_ }
+
+      - name: Configure and Build (MSVC x64)
+        shell: pwsh
+        env:
+          SDL2_DIR: ${{ env.SDL2_DIR }}
+          VCVARS_PATH: ${{ env.VCVARS_PATH }}
+        run: |
+          set -e
+          Write-Host "Starting configuration and build (MSVC x64)..."
+
+          # call vcvarsall to set up environment for MSVC (amd64)
+          & "$env:VCVARS_PATH" amd64
+
+          # ensure python command is python3 or python
+          $py = "python"
+          if ((Get-Command python3 -ErrorAction SilentlyContinue)) { $py = "python3" }
+
+          # Clean previous build if any
+          if (Test-Path "build") {
+            Write-Host "Removing existing build directory..."
+            Remove-Item -Recurse -Force ./build
+          }
+
+          # Pass explicit path to SDL2 if waf supports it
+          $sdlArg = ""
+          if ($env:SDL2_DIR) {
+            # waf in this project accepts --sdl2=SDL2 (folder name) — we give full path
+            $sdlArg = "--sdl2=`"$env:SDL2_DIR`""
+            Write-Host "Using SDL2 at $env:SDL2_DIR"
+          } else {
+            Write-Host "SDL2_DIR not set; expecting SDL2 folder in workspace root."
+          }
+
+          # Configure: target game is cstrike (CS:S)
+          & $py waf configure -T release --build-games="cstrike" $sdlArg --msvc_targets="x64"
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "--- CONFIG FAILED ---"
+            if (Test-Path "build\config.log") {
+              Write-Host "---- config.log ----"
+              Get-Content build\config.log -Tail 200
+            }
+            exit $LASTEXITCODE
+          }
+
+          # Determine number of logical processors and use for parallel build
+          $proc = [int]$env:NUMBER_OF_PROCESSORS
+          if (-not $proc) { $proc = 2 }
+          Write-Host "Building with $proc parallel jobs..."
+          & $py waf build -j$proc -p
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "Build failed (waf)."
+            exit $LASTEXITCODE
+          }
+
+      - name: Prepare Full Package (copy executables, DLLs, and cstrike content)
+        shell: pwsh
+        run: |
+          $dest = "episodes_x64_full_build"
+          if (Test-Path $dest) { Remove-Item -Recurse -Force $dest }
+          New-Item -ItemType Directory -Path $dest | Out-Null
+
+          # Copy executables and DLLs from build tree
+          $binaryPatterns = @("*.exe","*.dll","*.so","*.lib")
+          Get-ChildItem -Path build -Recurse -File | Where-Object { $binaryPatterns -contains $_.Extension } | ForEach-Object {
+            $rel = $_.FullName.Substring((Resolve-Path build).Path.Length).TrimStart('\')
+            $outPath = Join-Path $dest $rel
+            $outDir = Split-Path $outPath -Parent
+            if (-not (Test-Path $outDir)) { New-Item -ItemType Directory -Path $outDir | Out-Null }
+            Copy-Item -Path $_.FullName -Destination $outPath -Force
+          }
+
+          # Copy cstrike (game) content if exists (so server/client has assets)
+          $possibleGameDirs = @("game\cstrike","game\cstrike_panorama","game\cstrike_hd") 
+          foreach ($g in $possibleGameDirs) {
+            if (Test-Path $g) {
+              Write-Host "Copying game folder $g"
+              Copy-Item -Path $g -Destination (Join-Path $dest (Split-Path $g -Leaf)) -Recurse -Force
+            }
+          }
+
+          # Also copy common game assets if present (materials, models, maps)
+          foreach ($d in @("materials","models","maps","sound")) {
+            if (Test-Path $d) {
+              Write-Host "Copying $d"
+              Copy-Item -Path $d -Destination (Join-Path $dest $d) -Recurse -Force
+            }
+          }
+
+          Write-Host "--- Files to be packaged ---"
+          Get-ChildItem -Path $dest -Recurse | Select-Object -First 200 | ForEach-Object { Write-Host $_.FullName }
+
+          # Create zip archive
+          $zipName = "HL2-Episodes-Source-x64-Full-$(Get-Date -Format yyyyMMdd_HHmmss).zip"
+          Write-Host "Creating archive $zipName ..."
+          Compress-Archive -Path "$dest\*" -DestinationPath $zipName -Force
+          Write-Host "Archive created: $zipName"
+          echo "ARCHIVE=$zipName" >> $env:GITHUB_OUTPUT
+
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: HL2-Episodes-Source-x64-Full
+          path: ${{ steps.prepare_full_package.outputs.ARCHIVE || 'HL2-Episodes-Source-x64-Full-*.zip' }}
