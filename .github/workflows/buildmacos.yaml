@@ -1,0 +1,110 @@
+# Build Episodic on macOS (Intel / amd64)
+# - Ensures runner is x86_64 (Intel)
+# - Installs deps via Homebrew
+# - Runs waf configure/build (same commands as on Linux)
+# - Packages executables and dynamic libraries into a tar.gz artifact
+
+name: Build Episodic macOS AMD64 (Native)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Check architecture is Intel (x86_64)
+        run: |
+          arch=$(uname -m)
+          echo "Runner arch: $arch"
+          if [ "$arch" != "x86_64" ]; then
+            echo "ERROR: This workflow expects an Intel (x86_64/amd64) macOS runner."
+            echo "Current arch is $arch. To run on Intel, use a self-hosted Intel macOS runner or an Intel macOS image."
+            exit 1
+          fi
+
+      - name: Ensure Xcode CLI tools (quick check)
+        run: |
+          if ! xcode-select -p >/dev/null 2>&1; then
+            echo "Xcode CLI tools missing — attempting to install (may require interaction)"
+            xcode-select --install || true
+          else
+            echo "Xcode CLI tools present"
+          fi
+
+      - name: Install Homebrew dependencies
+        run: |
+          set -e
+          echo "Updating Homebrew and installing packages..."
+          # Homebrew is present on GitHub mac runners. Update first.
+          brew update || true
+          brew install pkg-config python@3 sdl2 openal-soft jpeg libpng libtiff webp freetype fontconfig curl bzip2
+          # Some formulas might already be installed; brew will skip them.
+          # Ensure python3 is available as 'python3'
+          echo "brew prefix: $(brew --prefix)"
+          python3 --version || true
+
+      - name: Environment setup for build
+        run: |
+          set -e
+          # Force clang/clang++ as compilers (macOS default)
+          export CC=clang
+          export CXX=clang++
+          # macOS deployment target (adjust if needed)
+          export MACOSX_DEPLOYMENT_TARGET=10.15
+          echo "MACOSX_DEPLOYMENT_TARGET=$MACOSX_DEPLOYMENT_TARGET"
+
+      - name: Configure (waf)
+        run: |
+          set -e
+          # Use same configure flags as on Linux; waf should detect macOS specifics
+          python3 waf configure -T release --build-games=episodic --disable-warns
+
+      - name: Build (waf)
+        run: |
+          set -e
+          python3 waf build -p
+
+      - name: Prepare and Package macOS build artifacts
+        run: |
+          set -e
+          mkdir -p out
+
+          echo "Collecting build artifacts..."
+          # Copy Mach-O executables, .dylib, .framework and any .so if present
+          # Mach-O detection: file output contains "Mach-O"
+          while IFS= read -r -d '' f; do
+            echo "Found binary/library: $f"
+            # preserve folder structure for frameworks and libraries if needed
+            dest="out/$(dirname "${f#./build/}")"
+            mkdir -p "$dest"
+            cp -R "$f" "$dest/"
+          done < <(find build -type f \( -perm -111 -o -name "*.dylib" -o -name "*.framework" -o -name "*.so" \) -print0)
+
+          # Additional: copy any data/assets the build expects (adjust paths if your project uses other directories)
+          if [ -d "game" ]; then
+            cp -R game out/ || true
+          fi
+
+          # List packaged files for debugging
+          echo "Out contents:"
+          find out -maxdepth 3 -print || true
+
+          # Create tar.gz
+          TAR_NAME="episodic_macos_amd64.tar.gz"
+          tar -czvf "$TAR_NAME" out
+          echo "Packaged: $TAR_NAME"
+          echo "tar_name=$TAR_NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Episodic-macos-amd64
+          path: episodic_macos_amd64.tar.gz
