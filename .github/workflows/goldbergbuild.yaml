@@ -1,48 +1,88 @@
+name: Build Project Multi-OS
+
+on:
+  push:
+    branches: [ main, master, develop ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-latest]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      # --- ПІДГОТОВКА LINUX ---
+      - name: Install Deps (Linux)
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake pkg-config libssl-dev \
+            libprotobuf-dev protobuf-compiler libsdl2-dev libgl1-mesa-dev \
+            qtbase5-dev qt5-qmake qtbase5-dev-tools zlib1g-dev
+
+      # --- БІЛД LINUX ---
       - name: Build (Linux)
         if: matrix.os == 'ubuntu-22.04'
         shell: bash
         run: |
-          # Покращений пошук головного CMakeLists.txt
-          # Шукаємо файл, який НЕ в папках thirdparty, external, tests або gtest
-          CMAKE_PATH=$(find . -maxdepth 3 -name "CMakeLists.txt" \
-            -not -path "*/thirdparty/*" \
-            -not -path "*/external/*" \
-            -not -path "*/tests/*" \
-            -not -path "*/gtest/*" | head -n 1 | xargs dirname)
-          
-          if [ -z "$CMAKE_PATH" ]; then
-            echo "КРИТИЧНА ПОМИЛКА: Головний CMakeLists.txt не знайдено!"
-            ls -R
-            exit 1
+          # Шукаємо правильний CMakeLists.txt (ігноруємо папки залежностей)
+          if [ -f "./CMakeLists.txt" ]; then
+            export SRC_DIR="."
+          else
+            export SRC_DIR=$(find . -maxdepth 2 -name "CMakeLists.txt" -not -path "*/thirdparty/*" -not -path "*/extern/*" | head -n 1 | xargs dirname)
           fi
           
-          echo "Знайдено головний проект у: $CMAKE_PATH"
+          echo "Target directory: $SRC_DIR"
           export CMAKE_PREFIX_PATH=/usr/lib/x86_64-linux-gnu/cmake/Qt5
           
-          cmake -S "$CMAKE_PATH" -B build -DCMAKE_BUILD_TYPE=Release -Wno-dev
-          cmake --build build -j$(nproc)
+          cmake -S "$SRC_DIR" -B build -DCMAKE_BUILD_TYPE=Release -Wno-dev
+          cmake --build build --config Release -j$(nproc)
 
+      # --- ПІДГОТОВКА WINDOWS ---
+      - name: Install Qt (Windows)
+        if: matrix.os == 'windows-latest'
+        uses: jurplel/install-qt-action@v3
+        with:
+          version: '5.15.2'
+          arch: 'win64_msvc2019_64'
+
+      # --- БІЛД WINDOWS ---
       - name: Build (Windows)
         if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
-          # Покращений пошук на Windows (ігноруємо сторонні папки)
-          $CMakeFile = Get-ChildItem -Recurse -Filter "CMakeLists.txt" | 
-            Where-Object { 
-              $_.FullName -notlike "*\thirdparty\*" -and 
-              $_.FullName -notlike "*\external\*" -and 
-              $_.FullName -notlike "*\tests\*" -and
-              $_.FullName -notlike "*\build\*"
-            } | Select-Object -First 1
-          
-          if ($null -eq $CMakeFile) {
-            Write-Error "Головний CMakeLists.txt не знайдено!"
-            exit 1
+          # Шукаємо CMakeLists.txt в корені або в src
+          if (Test-Path ".\CMakeLists.txt") {
+            $SRC_DIR = "."
+          } else {
+            $SRC_DIR = (Get-ChildItem -Filter "CMakeLists.txt" -Recurse | Where-Object { $_.FullName -notlike "*thirdparty*" -and $_.FullName -notlike "*extern*" -and $_.FullName -notlike "*build*" } | Select-Object -First 1).DirectoryName
           }
-          
-          $CMakePath = $CMakeFile.DirectoryName
-          Write-Host "Знайдено головний проект у: $CMakePath"
 
-          cmake -S "$CMakePath" -B build -G "Visual Studio 17 2022" -A x64 -DCMAKE_BUILD_TYPE=Release -Wno-dev
+          Write-Host "Target directory: $SRC_DIR"
+          
+          cmake -S "$SRC_DIR" -B build -G "Visual Studio 17 2022" -A x64 -DCMAKE_BUILD_TYPE=Release -Wno-dev
           cmake --build build --config Release
+
+      # --- АРТЕФАКТИ ---
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: output-${{ matrix.os }}
+          path: |
+            build/bin/
+            build/Release/
+            bin/
+            *.exe
+            *.dll
+            *.so
+          if-no-files-found: warn
           
