@@ -1,53 +1,24 @@
-name: Build Project Multi-OS
-
-on:
-  push:
-    branches: [ main, master, develop ]
-  workflow_dispatch:
-
-permissions:
-  contents: read
-
-jobs:
-  build:
-    timeout-minutes: 60
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-22.04, windows-latest]
-    runs-on: ${{ matrix.os }}
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          submodules: recursive
-
-      - name: List files (Debug)
-        # Цей крок покаже структуру папок, щоб ми бачили, де лежить CMakeLists.txt
-        shell: bash
-        run: find . -maxdepth 3 -name "CMakeLists.txt"
-
-      - name: Install Dependencies (Linux)
-        if: matrix.os == 'ubuntu-22.04'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential cmake pkg-config libssl-dev \
-            libprotobuf-dev protobuf-compiler libsdl2-dev libgl1-mesa-dev \
-            qtbase5-dev qtchooser qt5-qmake qtbase5-dev-tools zlib1g-dev
-
       - name: Build (Linux)
         if: matrix.os == 'ubuntu-22.04'
         shell: bash
         run: |
-          # Автоматичний пошук папки з CMakeLists.txt (беремо першу знайдену)
-          CMAKE_PATH=$(find . -name "CMakeLists.txt" -not -path "./build/*" | head -n 1 | xargs dirname)
-          echo "Found CMakeLists.txt in: $CMAKE_PATH"
+          # Покращений пошук головного CMakeLists.txt
+          # Шукаємо файл, який НЕ в папках thirdparty, external, tests або gtest
+          CMAKE_PATH=$(find . -maxdepth 3 -name "CMakeLists.txt" \
+            -not -path "*/thirdparty/*" \
+            -not -path "*/external/*" \
+            -not -path "*/tests/*" \
+            -not -path "*/gtest/*" | head -n 1 | xargs dirname)
           
+          if [ -z "$CMAKE_PATH" ]; then
+            echo "КРИТИЧНА ПОМИЛКА: Головний CMakeLists.txt не знайдено!"
+            ls -R
+            exit 1
+          fi
+          
+          echo "Знайдено головний проект у: $CMAKE_PATH"
           export CMAKE_PREFIX_PATH=/usr/lib/x86_64-linux-gnu/cmake/Qt5
           
-          # Запускаємо CMake з правильним шляхом
           cmake -S "$CMAKE_PATH" -B build -DCMAKE_BUILD_TYPE=Release -Wno-dev
           cmake --build build -j$(nproc)
 
@@ -55,27 +26,23 @@ jobs:
         if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
-          # Пошук шляху на Windows
-          $CMakeFile = Get-ChildItem -Recurse -Filter "CMakeLists.txt" | Where-Object { $_.FullName -notlike "*\build\*" } | Select-Object -First 1
-          $CMakePath = $CMakeFile.DirectoryName
-          Write-Host "Found CMakeLists.txt in: $CMakePath"
-
-          # Встановлення Qt (якщо проект його потребує)
-          # Якщо Qt не потрібен, цей крок можна пропустити
+          # Покращений пошук на Windows (ігноруємо сторонні папки)
+          $CMakeFile = Get-ChildItem -Recurse -Filter "CMakeLists.txt" | 
+            Where-Object { 
+              $_.FullName -notlike "*\thirdparty\*" -and 
+              $_.FullName -notlike "*\external\*" -and 
+              $_.FullName -notlike "*\tests\*" -and
+              $_.FullName -notlike "*\build\*"
+            } | Select-Object -First 1
           
+          if ($null -eq $CMakeFile) {
+            Write-Error "Головний CMakeLists.txt не знайдено!"
+            exit 1
+          }
+          
+          $CMakePath = $CMakeFile.DirectoryName
+          Write-Host "Знайдено головний проект у: $CMakePath"
+
           cmake -S "$CMakePath" -B build -G "Visual Studio 17 2022" -A x64 -DCMAKE_BUILD_TYPE=Release -Wno-dev
           cmake --build build --config Release
-
-      - name: Upload Artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-output-${{ matrix.os }}
-          path: |
-            build/bin/
-            build/Release/
-            bin/
-            *.exe
-            *.dll
-            *.so
-          if-no-files-found: warn
           
