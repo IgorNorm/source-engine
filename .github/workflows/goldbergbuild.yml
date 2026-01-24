@@ -1,0 +1,99 @@
+name: Build Goldberg Multi-OS
+
+on:
+  push:
+    branches: [ main, master, develop ]
+  workflow_dispatch:
+    inputs:
+      upstream_repo:
+        description: 'Optional upstream repo URL'
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive # Обов'язково для Goldberg/Launcher
+
+      - name: System Dependencies (Linux)
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake pkg-config \
+            libssl-dev libprotobuf-dev protobuf-compiler \
+            qtbase5-dev qtchooser qt5-qmake qtbase5-dev-tools \
+            libqt5svg5-dev qtdeclarative5-dev zlib1g-dev \
+            libsdl2-dev libgl1-mesa-dev extra-cmake-modules
+
+      - name: Fix Submodules & Resource Dirs
+        shell: bash
+        run: |
+          # Goldberg і Лаунчери часто мають порожні підмодулі
+          git submodule update --init --recursive
+          
+          # Створюємо необхідні папки, якщо їх забули в репозиторії
+          mkdir -p notsecrets
+          if [ ! -f "notsecrets/CMakeLists.txt" ]; then
+            echo 'add_library(notsecrets INTERFACE)' > notsecrets/CMakeLists.txt
+          fi
+
+      # --- BUILD LINUX ---
+      - name: Build (Linux)
+        if: matrix.os == 'ubuntu-22.04'
+        shell: bash
+        run: |
+          # Явно вказуємо Qt5 шлях для CMake
+          export CMAKE_PREFIX_PATH=/usr/lib/x86_64-linux-gnu/cmake/Qt5
+          
+          # Видаляємо старий кеш і збираємо
+          rm -rf build && mkdir build
+          cmake -S . -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DLauncher_LAYOUT=EMBEDDED \
+            -Wno-dev
+          
+          cmake --build build -j$(nproc)
+
+      # --- BUILD WINDOWS ---
+      - name: Install Qt (Windows)
+        if: matrix.os == 'windows-latest'
+        uses: jurplel/install-qt-action@v3
+        with:
+          version: '5.15.2'
+          arch: 'win64_msvc2019_64'
+
+      - name: Build (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          cmake -S . -B build -G "Visual Studio 17 2022" -A x64 `
+            -DCMAKE_BUILD_TYPE=Release `
+            -Wno-dev
+          cmake --build build --config Release
+
+      # --- ARTIFACTS ---
+      - name: Upload Build
+        uses: actions/upload-artifact@v4
+        with:
+          name: Goldberg-${{ matrix.os }}
+          path: |
+            build/bin/
+            build/launcher/
+            bin/
+            *.exe
+            *.so
+            *.dll
+            
